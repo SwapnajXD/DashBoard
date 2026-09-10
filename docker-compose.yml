@@ -13,3 +13,5 @@ services:
       # LOKI_URL=
       # TAILSCALE_API_URL=
       # CAMERA_URL=
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
