@@ -1,53 +1,49 @@
 # Olympus Control Plane
 
-A custom operations dashboard for the Olympus homelab.
+A NOC-style control plane for the Olympus homelab.
 
-## Current UI
+## v0.2 improvements
 
-The first version is intentionally frontend-only and uses representative data from the current homelab architecture:
+- Next.js 16 / React 19.2 dependency targets.
+- Responsive NOC dashboard layout.
+- Service search/filter in the top bar.
+- Manual telemetry sync control with last-sync timestamp.
+- Clear `DEMO TELEMETRY` banner so mock values are not confused with live data.
+- Expanded service inventory with host placement.
+- Integration-source panel for Prometheus, Proxmox API, Docker Engine, K3s API, Loki and Tailscale.
+- Camera slot kept as a future integration point.
+- No credentials are stored in the browser UI.
 
-- Apollo / Proxmox
-- Athena / Docker
-- Hestia / Docker
-- K3s
-- Prometheus
-- Grafana
-- Loki
-- Grafana Alloy
-- Node Exporter
-- cAdvisor
-- Glances
-- Portainer
-- Vaultwarden
-- Homepage
-- Tailscale
-- Floci
-
-A dedicated camera / 3D-printer panel is included as a placeholder. The actual stream can be added later.
-
-## Run locally
+## Run
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Then open the local Next.js development URL.
 
-## Run with Docker
+## Important
 
-```bash
-docker compose up -d --build
-```
-
-Then open `http://localhost:3000`.
-
-## Next implementation phase
-
-Replace the demo values with backend integrations. Do not put Proxmox or Docker credentials in the browser.
+The dashboard is still using representative telemetry. The next engineering step is to replace the mock values with server-side API adapters.
 
 Recommended flow:
 
-Browser -> Next.js API/backend -> Prometheus / Loki / Proxmox / Docker / K3s
+```text
+Browser
+   |
+   v
+Next.js server routes
+   |---- Prometheus
+   |---- Proxmox API
+   |---- Docker Engine / Portainer
+   |---- K3s API
+   |---- Loki
+   `---- Tailscale
+```
 
-Camera can later be added through `CAMERA_URL`, preferably using a browser-compatible stream such as HLS/WebRTC/MJPEG depending on the camera setup.
+Keep API tokens, passwords and kubeconfig material server-side in environment variables. Do not expose them to client-side React code.
+
+## Future camera
+
+When the camera is available, add a server-side camera configuration such as `CAMERA_URL` and render the appropriate stream format. Avoid exposing private credentials in the URL.
