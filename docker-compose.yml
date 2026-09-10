@@ -1,17 +1,9 @@
 services:
-  control-plane:
+  olympus:
     build: .
-    container_name: olympus-control-plane
+    container_name: olympus
     restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      # Add these later when the real integrations are wired:
-      # PROXMOX_URL=
-      # PROMETHEUS_URL=
-      # LOKI_URL=
-      # TAILSCALE_API_URL=
-      # CAMERA_URL=
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
