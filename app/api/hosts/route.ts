@@ -3,6 +3,7 @@ import { hosts } from "@/app/lib/config/hosts";
 import { getPrometheusStatus } from "@/app/lib/adapters/prometheus";
 import { getLokiStatus } from "@/app/lib/adapters/loki";
 import { getProxmoxStatus } from "@/app/lib/adapters/proxmox";
+import { getRemoteDockerStatus } from "@/app/lib/adapters/docker";
 import type {
   AdapterKind,
   AdapterStatus,
@@ -45,6 +46,8 @@ async function resolveAdapterStatus(
       return getLokiStatus(host);
     case "proxmox":
       return getProxmoxStatus(host);
+    case "docker":
+      return getRemoteDockerStatus(host);
     default:
       return { state: "not_implemented" };
   }
