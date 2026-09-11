@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { hosts } from "@/app/lib/config/hosts";
 import { getPrometheusStatus } from "@/app/lib/adapters/prometheus";
+import { getLokiStatus } from "@/app/lib/adapters/loki";
 import type {
   AdapterKind,
   AdapterStatus,
@@ -39,6 +40,8 @@ async function resolveAdapterStatus(
   switch (adapter) {
     case "prometheus":
       return getPrometheusStatus(host);
+    case "loki":
+      return getLokiStatus(host);
     default:
       return { state: "not_implemented" };
   }
