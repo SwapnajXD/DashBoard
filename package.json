@@ -8,17 +8,18 @@
     "start": "next start"
   },
   "dependencies": {
+    "dockerode": "^4.0.9",
+    "lucide-react": "0.468.0",
     "next": "16.3.4",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "lucide-react": "0.468.0",
-    "dockerode": "^4.0.9"
+    "undici": "^8.10.2"
   },
   "devDependencies": {
+    "@types/dockerode": "^3.3.31",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "typescript": "^5",
-    "@types/dockerode": "^3.3.31"
+    "typescript": "^5"
   }
 }
