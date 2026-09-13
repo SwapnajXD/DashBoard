@@ -81,6 +81,86 @@ test("malformed Proxmox inventory is unavailable, never a fabricated empty list"
   assert.equal(result.data, null); assert.equal(result.error?.code, "invalid_response");
 });
 
+test("Proxmox missing endpoint or credentials never attempts a request", async () => {
+  const apollo = { ...host("apollo"), network: {} };
+  const neverRequest: typeof request = async () => { assert.fail("Unexpected Proxmox request"); };
+  delete process.env.PROXMOX_URL;
+  assert.equal((await getProxmoxStatus(apollo, neverRequest)).state, "unconfigured");
+  process.env.PROXMOX_URL = "https://10.1.1.1:8006";
+  for (const missing of ["PROXMOX_API_TOKEN_ID", "PROXMOX_API_TOKEN_SECRET"]) {
+    process.env.PROXMOX_API_TOKEN_ID = "fixture@pve!reader";
+    process.env.PROXMOX_API_TOKEN_SECRET = "fixture-secret";
+    delete process.env[missing];
+    const result = await getProxmoxStatus(apollo, neverRequest);
+    assert.equal(result.state, "unconfigured"); assert.equal(result.status, "unknown");
+    assert.equal(result.data, null);
+  }
+});
+
+test("Proxmox unreachable and invalid credentials return sanitized failures", async () => {
+  process.env.PROXMOX_URL = "https://10.1.1.1:8006";
+  process.env.PROXMOX_API_TOKEN_ID = "fixture@pve!reader";
+  process.env.PROXMOX_API_TOKEN_SECRET = "fixture-secret";
+  for (const error of [new Error("fixture-secret at https://10.1.1.1:8006"), new TelemetryFailure("unauthorized", "Source returned HTTP 401."), new TelemetryFailure("unauthorized", "Source returned HTTP 403.")]) {
+    const result = await getProxmoxStatus(host("apollo"), transport(() => { throw error; }));
+    assert.equal(result.state, error instanceof TelemetryFailure ? "error" : "unreachable");
+    assert.equal(result.error?.code, error instanceof TelemetryFailure ? "unauthorized" : "unreachable");
+    assert.equal(result.status, "unknown"); assert.equal(result.data, null);
+    assert.ok(!JSON.stringify(result).includes("fixture-secret"));
+    assert.ok(!JSON.stringify(result).includes("10.1.1.1"));
+  }
+});
+
+test("Proxmox rejects malformed resource identities but preserves successful empty lists", async () => {
+  process.env.PROXMOX_URL = "https://10.1.1.1:8006";
+  process.env.PROXMOX_API_TOKEN_ID = "fixture@pve!reader"; process.env.PROXMOX_API_TOKEN_SECRET = "fixture-secret";
+  for (const value of [{}, null, { node: "", type: "qemu", vmid: -1 }, { type: "qemu", vmid: "100" }]) {
+    const result = await getProxmoxStatus(host("apollo"), transport(() => ({ data: [value] })));
+    assert.equal(result.error?.code, "invalid_response"); assert.equal(result.data, null);
+  }
+  const empty = await getProxmoxStatus(host("apollo"), transport(() => ({ data: [] })));
+  assert.equal(empty.state, "ok"); assert.equal(empty.status, "unknown");
+  assert.deepEqual(empty.data?.vms.data, []);
+});
+
+test("Proxmox authentication paths and normalized resources reach the existing Apollo cards", async () => {
+  process.env.PROXMOX_URL = "https://10.1.1.1:8006/";
+  process.env.PROXMOX_NODE_NAME = "physical-node";
+  process.env.PROXMOX_API_TOKEN_ID = "fixture@pve!reader"; process.env.PROXMOX_API_TOKEN_SECRET = "fixture-secret";
+  const paths: string[] = [];
+  const adapter = await getProxmoxStatus(host("apollo"), async (base, path, options) => {
+    assert.equal(base, "https://10.1.1.1:8006");
+    assert.equal(options?.headers?.Authorization, "PVEAPIToken=fixture@pve!reader=fixture-secret");
+    paths.push(path);
+    if (path.endsWith("/nodes")) return { data: [{ node: "physical-node", status: "online", cpu: 0.25, maxcpu: 8, mem: 1024, maxmem: 4096, disk: 512, maxdisk: 1024, uptime: 7200, password: "fixture-secret" }] };
+    if (path.endsWith("type=storage")) return { data: [{ id: "storage/physical-node/local", type: "storage", node: "physical-node", disk: 512, maxdisk: 1024 }] };
+    return { data: [{ type: "qemu", vmid: 100, name: "athena-live-name", status: "running", mem: 256, maxmem: 1024 }, { type: "qemu", vmid: 101, name: "hermes-live-name", status: "stopped" }] };
+  });
+  assert.deepEqual(paths.sort(), ["/api2/json/cluster/resources?type=storage", "/api2/json/cluster/resources?type=vm", "/api2/json/nodes"]);
+  const result = await collectInfrastructure({ ...collectors, proxmox: async () => adapter });
+  const view = infrastructureView(result);
+  assert.equal(view.status("apollo"), "online");
+  assert.equal(view.cpu, 25); assert.equal(view.memory, 25); assert.equal(view.storage, 50);
+  assert.equal(view.apollo?.cpuCount, 8); assert.equal(view.apollo?.uptimeSeconds, 7200);
+  assert.equal(view.proxmox?.vms.data?.[0].name, "athena-live-name");
+  assert.equal(view.proxmox?.vms.data?.[0].memoryUsedBytes, 256);
+  assert.equal(view.status("athena"), "online"); assert.equal(view.status("hermes"), "offline");
+  assert.equal(view.proxmox?.storage.data?.[0].storageTotalBytes, 1024);
+  assert.ok(!JSON.stringify(result).includes("fixture-secret"));
+  assert.ok(!JSON.stringify(result).includes("fixture@pve"));
+});
+
+test("Apollo failure preserves healthy independent host adapters", async () => {
+  const result = await collectInfrastructure({ ...collectors,
+    proxmox: async () => failed(new TelemetryFailure("unauthorized", "Source returned HTTP 401.")),
+    loki: async () => collected({ ready: true, labelCount: await reading(async () => 2) }, []),
+  });
+  assert.equal(result.hosts[0].status, "unknown");
+  assert.equal(result.hosts[0].adapters.proxmox?.error?.code, "unauthorized");
+  assert.equal(result.hosts[1].status, "online");
+  assert.equal(result.hosts[1].adapters.loki?.data?.ready, true);
+});
+
 test("Prometheus sample rejects empty, ambiguous, NaN, and malformed vectors", () => {
   for (const result of [[], [{ value: [1, "1"] }, { value: [1, "2"] }], [{ value: [1, "NaN"] }], [{ value: [1, ""] }]]) {
     assert.throws(() => normalizeSample({ status: "success", data: { resultType: "vector", result } }));

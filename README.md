@@ -87,6 +87,35 @@ Address-derived requests do not fall back from Tailscale to LAN. Kubernetes can 
 
 The read-only Proxmox adapter collects `/nodes`, `/cluster/resources?type=vm`, and `/cluster/resources?type=storage` independently. It normalizes status, CPU ratio/count, memory, storage capacity/use, uptime, and VM identity where returned. VM 100 maps to Athena; VM 101 maps to Hermes. Missing fields remain `null`. API visibility depends on token permissions. Apollo live verification is pending local endpoint/credential configuration.
 
+#### Configure Apollo locally
+
+Preserve existing `.env.local` entries and add the following server-only configuration. This file is gitignored; never paste a token into source code, a commit, a screenshot, or a browser request.
+
+```dotenv
+PROXMOX_URL=
+PROXMOX_API_TOKEN_ID=
+PROXMOX_API_TOKEN_SECRET=
+PROXMOX_NODE_NAME=apollo
+PROXMOX_CA_FILE=
+PROXMOX_ALLOW_SELF_SIGNED=false
+```
+
+Set `PROXMOX_URL` to Apollo's private HTTPS origin, typically port 8006, without `/api2/json`. Alternatively supply `APOLLO_TAILSCALE_ADDRESS` or `APOLLO_LAN_ADDRESS` for the selected network mode. Set `PROXMOX_NODE_NAME` to the exact node name returned by Proxmox; the Olympus host identity remains Apollo. Token IDs have the form `user@realm!token-name`. The adapter sends `Authorization: PVEAPIToken=<id>=<secret>` on server-side GET requests only; it does not use password login or session cookies.
+
+Use an existing read-only token where possible. If none exists, an Apollo administrator can create a dedicated user/token in the Proxmox web interface under Datacenter → Permissions → API Tokens. Keep privilege separation enabled and grant the user and token only the necessary read access; `PVEAuditor` at `/` with propagation provides read-only inventory visibility across nodes, VMs and storage. A separated token's effective permissions are limited by its backing user's permissions. Save the token secret locally when it is issued. Olympus does not create users, grant permissions, install software, or change Apollo. See the official [Proxmox user and token documentation](https://github.com/proxmox/pve-docs/blob/master/pveum.adoc) and [per-method API permissions](https://pve.proxmox.com/pve-docs/api-viewer/).
+
+Prefer a trusted certificate or set `PROXMOX_CA_FILE` to a local trusted CA PEM path matching Apollo's certificate. The existing `PROXMOX_ALLOW_SELF_SIGNED=true` setting disables certificate verification for Proxmox only; leave it `false` for verified TLS. Use existing private LAN/Tailscale routing; no public port forwarding is needed. The adapter requires HTTPS but does not enforce private-address classification, so configure a private origin explicitly.
+
+#### Verify Apollo locally
+
+1. Configure the values locally, restart `npm run dev`, and open Olympus on localhost.
+2. Press SYNC. In the browser's network panel, inspect only the local `/api/infrastructure` response. Locate `hosts` → Apollo → `adapters.proxmox`; the response must not contain the token, authorization header, or configured endpoint.
+3. Confirm `nodes.data` contains the configured Apollo node and actual status/CPU/memory readings. Check `vms.data` for actual VM IDs, names, states and resources, including VM 100/Athena and VM 101/Hermes if visible to the token. Check `storage.data` for visible storage resources. Do not treat an empty permission-filtered inventory as proof that Apollo has no resources.
+4. Confirm the existing Apollo cards show CPU/RAM and node disk utilization where supplied, uptime, and observed VM states. Storage pool inventory is available in the API; it is not summed into the node disk card. Missing values remain unavailable. Configured Prometheus samples retain their existing precedence over Proxmox card readings.
+5. Diagnose using the sanitized adapter/reading error: `unconfigured` for missing endpoint/token, `unauthorized` for HTTP 401/403, `unreachable`/`timeout` for transport failures, and `invalid_response` for malformed data or resource identities. One failed resource list yields `partial` when another succeeds. An Apollo failure leaves independent host results available and does not prove Apollo is powered off.
+
+Local automated verification: `npm run typecheck`, `npm test`, and `npm run build`. The suite retains the original 17 tests and adds five Apollo-focused tests with injected API fixtures; no real credentials are required. These tests verify the integration contract, not live Apollo telemetry. Live verification remains pending until the local endpoint, read-only credentials and TLS trust are configured.
+
 ### Athena
 
 Prometheus is the primary metric source. Collection covers health, scrape targets, current alerts, and configured per-host instant queries. Queries must return exactly one finite sample between 0 and 100. Empty, ambiguous, invalid or missing series are unavailable. Configure queries against the actual exporter label sets; Olympus does not guess host selectors.

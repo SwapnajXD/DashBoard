@@ -33,12 +33,19 @@ export async function getProxmoxStatus(host: HostConfig, transport = request): P
     const ca = process.env.PROXMOX_CA_FILE ? await readFile(process.env.PROXMOX_CA_FILE, "utf8") : undefined;
     dispatcher = new Agent({ connect: { ca, rejectUnauthorized: process.env.PROXMOX_ALLOW_SELF_SIGNED !== "true" } });
     const options = { dispatcher, headers: { Authorization: `PVEAPIToken=${id}=${secret}` } };
-    const collect = (path: string, kind?: string) => reading(async () => {
+    const collect = (path: string, kind: "node" | "vm" | "storage") => reading(async () => {
       const body = object(await transport(base, `/api2/json${path}`, options));
-      return array(body.data).map(item => normalizeProxmox(item, kind));
+      return array(body.data).map(value => {
+        const item = object(value);
+        const valid = kind === "node" ? Boolean(string(item.node)?.trim())
+          : kind === "vm" ? (item.type === "qemu" || item.type === "lxc") && Number.isInteger(item.vmid) && Number(item.vmid) > 0
+          : item.type === "storage" && Boolean(string(item.id)?.trim());
+        if (!valid) throw new TelemetryFailure("invalid_response", "Proxmox resource identity is missing or invalid.");
+        return normalizeProxmox(item, kind === "node" ? kind : undefined);
+      });
     });
     const [nodes, vms, storage] = await Promise.all([
-      collect("/nodes", "node"), collect("/cluster/resources?type=vm"), collect("/cluster/resources?type=storage"),
+      collect("/nodes", "node"), collect("/cluster/resources?type=vm", "vm"), collect("/cluster/resources?type=storage", "storage"),
     ]);
     if ([nodes, vms, storage].every(item => item.state === "unavailable")) {
       const error = nodes.error!;
