@@ -14,7 +14,11 @@ export async function getLokiStatus(host: HostConfig, transport = request): Prom
     const labelCount = await reading(async () => {
       const body = object(await transport(base, "/loki/api/v1/labels", { headers }));
       if (body.status !== "success") throw new TelemetryFailure("upstream", "Loki label query did not succeed.");
-      return array(body.data).length;
+      const labels = array(body.data);
+      if (labels.some(label => typeof label !== "string" || !label.trim())) {
+        throw new TelemetryFailure("invalid_response", "Loki label names are invalid.");
+      }
+      return labels.length;
     });
     return collected({ ready: true, labelCount }, [labelCount]);
   } catch (error) { return failed(error); }

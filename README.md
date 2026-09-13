@@ -128,7 +128,33 @@ For example, adapt the `instance` selector below to a verified Node Exporter tar
 
 Use Node Exporter or Proxmox Exporter series already scraped by Athena for Apollo, and Hermes series when available. Unconfigured queries remain unavailable. No exporter or other monitoring component is installed by Olympus.
 
-Loki reports readiness and label count. Grafana/Alloy/exporter service states remain unknown unless a dedicated verified source is added; Prometheus reachability does not imply every observability service is healthy. Athena live verification is pending endpoint and query configuration. Prometheus alerts do not represent Grafana-managed alert rules.
+Loki reports readiness and validated label-name count. Grafana/Alloy/exporter service states remain unknown unless a dedicated verified source is added; Prometheus reachability does not imply every observability service is healthy. Prometheus alerts do not represent Grafana-managed alert rules.
+
+#### Athena live verification and local setup
+
+Read-only verification on 2026-09-14 (Asia/Kolkata) succeeded over Athena's existing Tailscale connection. Olympus did not install anything, change Athena, expose a port, access a Docker socket, or introduce another monitoring stack. The repository has no Athena Docker adapter or stack configuration: its Compose file runs Olympus only. Existing container telemetry is available through Prometheus's cAdvisor scrape.
+
+Configure the ignored `.env.local` with `PROMETHEUS_URL` and `LOKI_URL` pointing to Athena's private service origins (existing ports 9090 and 3100). Alternatively set the Athena address for the selected network mode. Optional `PROMETHEUS_BEARER_TOKEN`, `LOKI_BEARER_TOKEN`, and `LOKI_TENANT_ID` apply only if required by the existing service/proxy. The verified private endpoints accepted unauthenticated reads; no tokens were introduced. Credentials and configuration remain server-side.
+
+Verified observations, not application defaults:
+
+- Prometheus health, targets, instant queries and alerts returned HTTP 200. All five scrape targets were up: `cadvisor`, `node`, `probes`, `prometheus`, and `proxmox`. The alert list was successfully empty.
+- Proxmox Exporter identified `qemu/100` as `athena` on `apollo`. Athena-specific CPU and memory queries each returned one finite percentage without warnings. An initial sample was approximately 1.88% CPU and 82.76% memory; the source samples were about five seconds old. These are hypervisor-observed VM metrics, not guest process CPU or guest available-memory measurements.
+- cAdvisor reported eight named container series: alloy, node-exporter, glances, proxmox-exporter, grafana, cadvisor, prometheus and loki. Their last-seen values were at most approximately 13 seconds old in the check. This verifies recently collected container telemetry, not Docker health checks or application readiness. No container inventory schema or UI was added.
+- Node Exporter exposed four CPU idle series, memory and a root filesystem series, but its uname nodename was container-style. Guest filesystem attribution was not established; `PROMETHEUS_ATHENA_STORAGE_QUERY` remains unset. Proxmox VM disk allocation/zero usage is not a substitute for guest filesystem utilization.
+- Loki `/ready` and `/loki/api/v1/labels` returned HTTP 200, with three valid label names. Log contents, ingestion freshness and Grafana alert rules were not checked.
+- The running `/api/infrastructure` returned HTTP 200 with `Cache-Control: no-store`, Athena CPU/memory readings, five targets, an empty alert list and Loki label count. No configured token values appeared in the response. Its schema remains unchanged. Prometheus is `partial` because Athena storage and the other hosts' PromQL queries remain unconfigured; Loki is `ok`.
+
+The following query templates match the verified metric families. Replace `VERIFIED_EXPORTER_INSTANCE` with the actual Proxmox scrape instance selected from `/api/v1/targets`, and confirm `pve_guest_info` identifies VM 100 as Athena before configuring them:
+
+```dotenv
+PROMETHEUS_ATHENA_CPU_QUERY='100 * pve_cpu_usage_ratio{job="proxmox",instance="VERIFIED_EXPORTER_INSTANCE",id="qemu/100"}'
+PROMETHEUS_ATHENA_MEMORY_QUERY='100 * pve_memory_usage_bytes{job="proxmox",instance="VERIFIED_EXPORTER_INSTANCE",id="qemu/100"} / pve_memory_size_bytes{job="proxmox",instance="VERIFIED_EXPORTER_INSTANCE",id="qemu/100"}'
+```
+
+After changing local configuration, restart Olympus or confirm the development server reloaded it, then press SYNC. Inspect Athena's `adapters.prometheus.data.metrics.athena`, `targets`, `alerts`, and `adapters.loki` in the local API response. Empty/ambiguous/non-finite/out-of-range percentages remain unavailable. Readiness and individual resource failures remain isolated. The existing UI is preserved; Athena CPU/memory are currently available through the API, while existing integration/service indicators and alerts use their established views.
+
+The regression suite now has 27 tests, including five Athena-focused tests for missing endpoints, exact query/authentication forwarding, percentage failure isolation, sanitized connection/authentication failures, and Loki label validation. Fixtures require no live credentials. Run `npm test`, `npm run typecheck`, and `npm run build` after changes. Protocol details: [Prometheus HTTP API](https://prometheus.io/docs/prometheus/latest/querying/api/) and [Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/).
 
 ### Hermes
 
@@ -142,7 +168,7 @@ For a future dedicated credential, allow only `get`/`list` for core nodes/namesp
 
 The original layout is preserved. Apollo cards prefer configured Prometheus readings, with explicit Proxmox data as fallback. VM states, cluster counts/version/pod summaries, alert counts/list and adapter states come from the API. No generated demo telemetry remains. Intended host/service inventory and network topology remain static and labeled; absent firewall/NAT/mesh telemetry is unknown. The camera remains an unconfigured placeholder. A failed refresh retains previous readings under a stale/error notice and their last-sync timestamp.
 
-Pending: configure and verify live Apollo/Athena sources and PromQL selectors; add richer views for resource data already collected; implement Loki log/event queries, Grafana alert coverage and authentication; then prepare Kubernetes deployment manifests in the next milestone. Nothing has been installed on Hermes.
+Pending: verify Athena guest filesystem attribution and any additional host PromQL selectors; add richer views for resource data already collected; implement Loki log/event queries, Grafana alert coverage and authentication; then prepare Kubernetes deployment manifests in a later milestone. Nothing has been installed on Hermes.
 
 The Dockerfile builds the application image with `npm ci`; `.dockerignore` excludes local environment files, cluster credentials and archives. Optional local Compose reads `.env.local` and binds localhost. If using local Compose with file-based credentials, supply those files through an explicit read-only mount you control; host file paths do not exist automatically in the container. Production remains targeted at Hermes/K3s.
 
