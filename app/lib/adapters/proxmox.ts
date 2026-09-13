@@ -1,122 +1,51 @@
+import "server-only";
+import { readFile } from "node:fs/promises";
 import { Agent } from "undici";
-import { resolveHostAddress } from "@/app/lib/config/hosts";
-import type { AdapterStatus, HostConfig } from "@/app/lib/types/infrastructure";
+import { resolveHostAddress } from "../config/hosts";
+import type { AdapterStatus, HostConfig, ProxmoxData, ProxmoxResource } from "../types/infrastructure";
+import { array, collected, endpoint, failed, finite, object, reading, request, string, TelemetryFailure } from "./shared";
 
-const PROXMOX_PORT = 8006;
-const FETCH_TIMEOUT_MS = 3000;
+export function normalizeProxmox(value: unknown, kind?: string): ProxmoxResource {
+  const item = object(value);
+  const type = kind ?? string(item.type) ?? "unknown";
+  const vmId = finite(item.vmid);
+  return {
+    id: string(item.id) ?? (type === "node" ? `node/${string(item.node) ?? "unknown"}` : `${type}/${vmId ?? "unknown"}`),
+    node: string(item.node) ?? "unknown", name: string(item.name), type, vmId,
+    hostId: type === "node" && item.node === (process.env.PROXMOX_NODE_NAME || "apollo") ? "apollo" : vmId === 100 ? "athena" : vmId === 101 ? "hermes" : null,
+    status: item.status === "online" || item.status === "running" ? "online" : item.status === "offline" || item.status === "stopped" ? "offline" : "unknown",
+    cpuRatio: finite(item.cpu), cpuCount: finite(item.maxcpu),
+    memoryUsedBytes: finite(item.mem), memoryTotalBytes: finite(item.maxmem),
+    storageUsedBytes: finite(item.disk), storageTotalBytes: finite(item.maxdisk),
+    uptimeSeconds: finite(item.uptime),
+  };
+}
 
-/**
- * Apollo's Proxmox web UI uses the default self-signed certificate
- * (confirmed — this is a homelab, not a public-facing service). This
- * agent is scoped to Proxmox API calls only; it never disables TLS
- * verification globally for the rest of Olympus.
- */
-const proxmoxAgent = new Agent({
-  connect: { rejectUnauthorized: false },
-});
-
-type ProxmoxNode = {
-  node: string;
-  status: string;
-  cpu?: number;
-  maxcpu?: number;
-  mem?: number;
-  maxmem?: number;
-  uptime?: number;
-};
-
-type ProxmoxNodesResponse = {
-  data: ProxmoxNode[];
-};
-
-/**
- * Queries Apollo's Proxmox VE API for node status.
- *
- * Requires an API token, set via env vars:
- *   PROXMOX_API_TOKEN_ID     e.g. "olympus@pve!olympus-ro"
- *   PROXMOX_API_TOKEN_SECRET the token's secret UUID
- *
- * The token should use a read-only role (e.g. PVEAuditor) — Olympus only
- * ever reads status here, never issues write/control calls.
- *
- * Uses whichever address is reachable given the current NetworkMode
- * (Tailscale from Artemis, LAN once deployed on Hestia) — see
- * app/lib/config/hosts.ts. Never called from the browser; this only
- * runs server-side inside API routes.
- */
-export async function getProxmoxStatus(
-  host: HostConfig,
-): Promise<AdapterStatus> {
-  const address = resolveHostAddress(host, "proxmox");
-  if (!address) {
-    return {
-      state: "unreachable",
-      reason:
-        "No address reachable for Proxmox on this host in the current " +
-        "network mode.",
-    };
-  }
-
-  const tokenId = process.env.PROXMOX_API_TOKEN_ID;
-  const tokenSecret = process.env.PROXMOX_API_TOKEN_SECRET;
-  if (!tokenId || !tokenSecret) {
-    return {
-      state: "error",
-      message:
-        "Proxmox API token not configured. Set PROXMOX_API_TOKEN_ID and " +
-        "PROXMOX_API_TOKEN_SECRET in the environment.",
-    };
-  }
-
-  const base = `https://${address}:${PROXMOX_PORT}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
+export async function getProxmoxStatus(host: HostConfig, transport = request): Promise<AdapterStatus<ProxmoxData>> {
+  let dispatcher: Agent | undefined;
   try {
-    const res = await fetch(`${base}/api2/json/nodes`, {
-      signal: controller.signal,
-      cache: "no-store",
-      headers: {
-        Authorization: `PVEAPIToken=${tokenId}=${tokenSecret}`,
-      },
-      // @ts-expect-error — `dispatcher` is a Node/undici fetch extension
-      // (not in the DOM fetch types) used here to scope the self-signed
-      // cert exception to just this request.
-      dispatcher: proxmoxAgent,
+    const address = resolveHostAddress(host, "proxmox");
+    const base = endpoint(process.env.PROXMOX_URL, address ? `https://${address}:8006` : null);
+    if (!base.startsWith("https://")) throw new TelemetryFailure("configuration", "Proxmox requires HTTPS.");
+    const id = process.env.PROXMOX_API_TOKEN_ID;
+    const secret = process.env.PROXMOX_API_TOKEN_SECRET;
+    if (!id || !secret) throw new TelemetryFailure("unconfigured", "Proxmox read-only API credentials are not configured.");
+    const ca = process.env.PROXMOX_CA_FILE ? await readFile(process.env.PROXMOX_CA_FILE, "utf8") : undefined;
+    dispatcher = new Agent({ connect: { ca, rejectUnauthorized: process.env.PROXMOX_ALLOW_SELF_SIGNED !== "true" } });
+    const options = { dispatcher, headers: { Authorization: `PVEAPIToken=${id}=${secret}` } };
+    const collect = (path: string, kind?: string) => reading(async () => {
+      const body = object(await transport(base, `/api2/json${path}`, options));
+      return array(body.data).map(item => normalizeProxmox(item, kind));
     });
-
-    if (res.status === 401 || res.status === 403) {
-      return {
-        state: "error",
-        message: `Proxmox rejected the API token (HTTP ${res.status})`,
-      };
+    const [nodes, vms, storage] = await Promise.all([
+      collect("/nodes", "node"), collect("/cluster/resources?type=vm"), collect("/cluster/resources?type=storage"),
+    ]);
+    if ([nodes, vms, storage].every(item => item.state === "unavailable")) {
+      const error = nodes.error!;
+      return failed(new TelemetryFailure(error.code, error.message));
     }
-    if (!res.ok) {
-      return {
-        state: "error",
-        message: `Proxmox API returned HTTP ${res.status}`,
-      };
-    }
-
-    const body = (await res.json()) as ProxmoxNodesResponse;
-    const nodes = (body.data ?? []).map((n) => ({
-      node: n.node,
-      status: n.status,
-      cpu: n.cpu ?? null,
-      maxcpu: n.maxcpu ?? null,
-      mem: n.mem ?? null,
-      maxmem: n.maxmem ?? null,
-      uptime: n.uptime ?? null,
-    }));
-
-    return {
-      state: "ok",
-      data: { address, nodes },
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { state: "error", message: `Unable to reach Proxmox: ${message}` };
-  } finally {
-    clearTimeout(timer);
-  }
+    const status = nodes.data?.find(node => node.hostId === "apollo")?.status ?? "unknown";
+    return collected({ nodes, vms, storage }, [nodes, vms, storage], status);
+  } catch (error) { return failed(error); }
+  finally { await dispatcher?.close(); }
 }

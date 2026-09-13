@@ -1,120 +1,89 @@
-export type HostType = "proxmox" | "vm" | "lxc";
-
+export type HostId = "apollo" | "athena" | "hermes" | "artemis";
+export type HostType = "proxmox" | "vm" | "workstation";
 export type HostStatus = "online" | "offline" | "unknown";
-
-export type Host = {
-  id: string;
-  name: string;
-  type: HostType;
-  address: string;
-  status: HostStatus;
-};
-
-export type ContainerStatus =
-  | "running"
-  | "exited"
-  | "paused"
-  | "restarting"
-  | "unknown";
-
-export type Container = {
-  id: string;
-  name: string;
-  image: string;
-  state: ContainerStatus;
-  status: string;
-  ports: {
-    privatePort: number;
-    publicPort?: number;
-    type: string;
-  }[];
-  created: number;
-  labels: Record<string, string>;
-};
-
-export type DockerHost = {
-  host: Host;
-  containers: Container[];
-  timestamp: string;
-};
-
-/**
- * Identifies which infrastructure adapter a host can be reached through.
- * A host may support more than one (e.g. Athena runs both Docker and K3s).
- */
-export type AdapterKind =
-  | "docker"
-  | "prometheus"
-  | "proxmox"
-  | "kubernetes"
-  | "loki";
-
-/**
- * Which network path Olympus should use to reach the homelab.
- *
- * "lan"       — Olympus is running inside the homelab (e.g. deployed on
- *               Hestia), so LAN addresses (10.10.10.0/24) are reachable.
- * "tailscale" — Olympus is running outside the homelab (e.g. dev on
- *               Artemis), so only each host's own Tailscale IP is
- *               reachable. Hestia has no Tailscale IP by design, so it is
- *               unreachable in this mode — that's expected, not a bug.
- *
- * Selected via the OLYMPUS_NETWORK_MODE env var (see hosts.ts).
- */
+export type AdapterKind = "prometheus" | "proxmox" | "kubernetes" | "loki";
 export type NetworkMode = "lan" | "tailscale";
-
-/**
- * A host's known addresses. Not every host has both — e.g. Hestia is
- * intentionally excluded from Tailscale, so it only has `lan`.
- */
-export type HostAddresses = {
-  lan?: string;
-  tailscale?: string;
-};
-
-/**
- * Server-side host registry entry. This describes a machine in the
- * homelab and which adapters can be attached to it — it does not itself
- * open any connection.
- */
 export type HostConfig = {
-  id: string;
-  name: string;
-  type: HostType;
-  network: HostAddresses;
-  adapters: AdapterKind[];
-  description?: string;
-  /**
-   * If true, this host must always be reached over LAN regardless of
-   * NetworkMode — e.g. Kubernetes, whose certs are only valid for
-   * Athena's LAN IP. Adapters for these hosts are simply unreachable
-   * from Artemis until Olympus is deployed inside the LAN.
-   */
+  id: HostId; name: string; type: HostType;
+  network: { lan?: string; tailscale?: string };
+  adapters: AdapterKind[]; description: string; vmId?: number;
   requiresLan?: AdapterKind[];
 };
-
-/**
- * Generic wrapper returned by adapters that are registered but not yet
- * wired up to a live integration. Lets `/api/hosts` report an honest
- * "not implemented" state instead of fabricating data.
- */
-export type AdapterStatus =
-  | { state: "not_implemented" }
-  | { state: "ok"; data: unknown }
-  | { state: "error"; message: string }
-  /**
-   * The adapter is implemented, but this host isn't reachable given the
-   * current NetworkMode — e.g. Hestia from Artemis, or Kubernetes on
-   * Athena from outside the LAN. Distinct from "error": this is an
-   * expected, known-topology limitation, not a failure.
-   */
-  | { state: "unreachable"; reason: string };
-
-/**
- * A single entry in the host registry response, combining the static
- * config with a best-effort status per attached adapter.
- */
+export type PublicHost = Pick<HostConfig, "id" | "name" | "type" | "description" | "vmId">;
+export type TelemetryError = {
+  code: "unconfigured" | "unreachable" | "timeout" | "unauthorized" | "upstream" | "invalid_response" | "unavailable" | "configuration";
+  message: string;
+};
+export type Reading<T> = {
+  state: "available" | "unavailable";
+  data: T | null;
+  timestamp: string;
+  error: TelemetryError | null;
+};
+export type AdapterStatus<T> = {
+  state: "ok" | "partial" | "error" | "unreachable" | "unconfigured";
+  status: HostStatus;
+  timestamp: string;
+  data: T | null;
+  error: TelemetryError | null;
+};
+export type ProxmoxResource = {
+  id: string; node: string; name: string | null; type: string;
+  vmId: number | null; hostId: HostId | null; status: HostStatus;
+  cpuRatio: number | null; cpuCount: number | null;
+  memoryUsedBytes: number | null; memoryTotalBytes: number | null;
+  storageUsedBytes: number | null; storageTotalBytes: number | null;
+  uptimeSeconds: number | null;
+};
+export type ProxmoxData = {
+  nodes: Reading<ProxmoxResource[]>;
+  vms: Reading<ProxmoxResource[]>;
+  storage: Reading<ProxmoxResource[]>;
+};
+export type MetricSample = { value: number; sampledAt: string };
+export type HostMetrics = {
+  cpuPercent: Reading<MetricSample>;
+  memoryPercent: Reading<MetricSample>;
+  storagePercent: Reading<MetricSample>;
+};
+export type PrometheusData = {
+  healthy: true;
+  targets: Reading<{ job: string | null; instance: string | null; health: HostStatus; lastScrape: string | null }[]>;
+  alerts: Reading<{ name: string; state: string; activeAt: string | null }[]>;
+  metrics: Record<"apollo" | "athena" | "hermes", HostMetrics>;
+};
+export type LokiData = { ready: true; labelCount: Reading<number> };
+export type KubernetesNode = {
+  name: string; status: HostStatus; roles: string[]; kubeletVersion: string | null;
+  capacity: { cpu: string | null; memory: string | null };
+  allocatable: { cpu: string | null; memory: string | null };
+};
+export type KubernetesContainer = {
+  name: string; kind: "container" | "init" | "ephemeral"; ready: boolean | null;
+  restartCount: number | null; state: "running" | "waiting" | "terminated" | "unknown";
+  reason: string | null;
+};
+export type KubernetesPod = {
+  name: string; namespace: string; node: string | null; phase: string | null;
+  containers: KubernetesContainer[];
+};
+export type KubernetesData = {
+  apiReachable: true;
+  version: Reading<string>;
+  nodes: Reading<KubernetesNode[]>;
+  namespaces: Reading<string[]>;
+  pods: Reading<KubernetesPod[]>;
+  deployments: Reading<{ name: string; namespace: string; desired: number | null; ready: number | null; available: number | null }[]>;
+  services: Reading<{ name: string; namespace: string; type: string | null; ports: { port: number; protocol: string | null }[] }[]>;
+  ingresses: Reading<{ name: string; namespace: string; className: string | null; hosts: string[] }[]>;
+  nodeMetrics: Reading<{ name: string; sampledAt: string | null; window: string | null; cpu: string | null; memory: string | null }[]>;
+};
+export type AdapterData = { proxmox: ProxmoxData; prometheus: PrometheusData; loki: LokiData; kubernetes: KubernetesData };
+export type AdapterResults = { [K in AdapterKind]?: AdapterStatus<AdapterData[K]> };
 export type HostSummary = {
-  host: HostConfig;
-  adapters: Partial<Record<AdapterKind, AdapterStatus>>;
+  host: PublicHost; status: HostStatus; statusSource: string | null;
+  timestamp: string; adapters: AdapterResults;
+};
+export type InfrastructureResponse = {
+  schemaVersion: 1; ok: true; hosts: HostSummary[]; timestamp: string;
 };
