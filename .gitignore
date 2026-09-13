@@ -1,2 +1,12 @@
 node_modules/
 .next/
+
+.env*
+!.env.example
+*.tsbuildinfo
+
+# Local cluster credentials
+.kube/
+*kubeconfig*
+*.pem
+*.key

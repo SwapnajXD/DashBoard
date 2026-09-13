@@ -1,9 +1,9 @@
+# Optional local development container; production runs on Hermes/K3s.
 services:
   olympus:
     build: .
-    container_name: olympus
     restart: unless-stopped
     ports:
-      - "3000:3000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env.local
