@@ -83,6 +83,8 @@ Address-derived requests do not fall back from Tailscale to LAN. Kubernetes can 
 
 ## Telemetry coverage
 
+Latest follow-up: [Athena ingestion, guest attribution, Grafana access and Hermes live verification — 2026-09-14](docs/verification-2026-09-14.md). This records verified data and remaining access limits without changing the V2 API contract or infrastructure.
+
 ### Apollo
 
 The read-only Proxmox adapter collects `/nodes`, `/cluster/resources?type=vm`, and `/cluster/resources?type=storage` independently. It normalizes status, CPU ratio/count, memory, storage capacity/use, uptime, and VM identity where returned. VM 100 maps to Athena; VM 101 maps to Hermes. Missing fields remain `null`. API visibility depends on token permissions. Apollo live verification is pending local endpoint/credential configuration.
@@ -142,7 +144,7 @@ Verified observations, not application defaults:
 - Proxmox Exporter identified `qemu/100` as `athena` on `apollo`. Athena-specific CPU and memory queries each returned one finite percentage without warnings. An initial sample was approximately 1.88% CPU and 82.76% memory; the source samples were about five seconds old. These are hypervisor-observed VM metrics, not guest process CPU or guest available-memory measurements.
 - cAdvisor reported eight named container series: alloy, node-exporter, glances, proxmox-exporter, grafana, cadvisor, prometheus and loki. Their last-seen values were at most approximately 13 seconds old in the check. This verifies recently collected container telemetry, not Docker health checks or application readiness. No container inventory schema or UI was added.
 - Node Exporter exposed four CPU idle series, memory and a root filesystem series, but its uname nodename was container-style. Guest filesystem attribution was not established; `PROMETHEUS_ATHENA_STORAGE_QUERY` remains unset. Proxmox VM disk allocation/zero usage is not a substitute for guest filesystem utilization.
-- Loki `/ready` and `/loki/api/v1/labels` returned HTTP 200, with three valid label names. Log contents, ingestion freshness and Grafana alert rules were not checked.
+- Loki `/ready` and `/loki/api/v1/labels` returned HTTP 200, with three valid label names. The [follow-up verification](docs/verification-2026-09-14.md) subsequently confirmed recent, advancing real log entries; Grafana alert state remains unavailable with the existing connection configuration.
 - The running `/api/infrastructure` returned HTTP 200 with `Cache-Control: no-store`, Athena CPU/memory readings, five targets, an empty alert list and Loki label count. No configured token values appeared in the response. Its schema remains unchanged. Prometheus is `partial` because Athena storage and the other hosts' PromQL queries remain unconfigured; Loki is `ok`.
 
 The following query templates match the verified metric families. Replace `VERIFIED_EXPORTER_INSTANCE` with the actual Proxmox scrape instance selected from `/api/v1/targets`, and confirm `pve_guest_info` identifies VM 100 as Athena before configuring them:
@@ -160,7 +162,7 @@ The regression suite now has 27 tests, including five Athena-focused tests for m
 
 The server-side adapter uses the official JavaScript client's kubeconfig handling and makes read-only API requests for version, nodes, namespaces, pods (including regular/init/ephemeral container state), deployments, services, networking/v1 ingresses and metrics.k8s.io node usage. CPU/memory capacity, allocatable resources and usage retain Kubernetes quantity units and sample timestamps. Prometheus remains the primary historical host telemetry source; metrics-server usage is a current Kubernetes snapshot.
 
-Live read-only verification on 2026-09-12 succeeded using Artemis's existing `hermes` context: K3s `v1.36.4+k3s1`, one Ready `hermes` control-plane node, four namespaces, seven pods, four deployments, four services, zero ingress resources and one node-metrics record. These are verification observations, not hardcoded application values. Traefik, CoreDNS, metrics-server, local-path-provisioner, Flannel and K3s ServiceLB are the intended existing cluster components; the adapter discovers API resources instead of manufacturing inventory.
+Live read-only verification on 2026-09-12, reconfirmed on 2026-09-14, succeeded using Artemis's existing `hermes` context: K3s `v1.36.4+k3s1`, one Ready `hermes` control-plane node, four namespaces, seven pods, four deployments, four services, zero ingress resources and one node-metrics record. The [latest verification](docs/verification-2026-09-14.md) records CPU/memory usage and resource readiness. These are verification observations, not hardcoded application values. Traefik, CoreDNS, metrics-server, local-path-provisioner, Flannel and K3s ServiceLB are the intended existing cluster components; the adapter discovers API resources instead of manufacturing inventory.
 
 For a future dedicated credential, allow only `get`/`list` for core nodes/namespaces/pods/services, apps deployments, networking.k8s.io ingresses, and metrics.k8s.io nodes, plus read access to `/version`. No Secrets access or write verbs are needed. The adapter does not enforce or grant RBAC permissions; a missing permission marks that resource unavailable. No RBAC or deployment manifests are created in this milestone.
 
