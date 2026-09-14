@@ -53,7 +53,7 @@ The response has `schemaVersion`, `ok`, a collection `timestamp`, and `hosts`. E
 
 - Host states are `online`, `offline`, or `unknown`. Proxmox's reported node/VM state takes precedence; otherwise Hermes node readiness or Athena API health supplies evidence. Failed requests alone never assert a host is offline. A Kubernetes `Ready=False` means the node is not ready, not proof of physical power state.
 - Adapter states are `ok`, `partial`, `unconfigured`, `unreachable`, or `error`. Every adapter includes its timestamp, source status, typed data or `null`, and a sanitized error or `null`.
-- Individual resource/metric readings have `available`/`unavailable`, `data`, `timestamp`, and `error`. A successful empty list is `[]`; an inaccessible or malformed list is `null`, never zero. Metric samples also include their source sample timestamp.
+- Individual resource/metric readings have `available`/`unavailable`, `data`, `timestamp`, and `error`. A successful empty list is `[]`; an inaccessible or malformed list is `null`, never zero. Prometheus instant samples include their evaluation timestamp; metrics-server and observation metadata retain their upstream timestamps.
 - `ok: true` means aggregation succeeded, not that infrastructure is healthy. Independent adapters and resource reads run concurrently, with partial failures preserved. Requests have a five-second timeout covering response bodies and an 8 MiB body limit. Kubernetes collection also has a 15-second request budget, 200-item pages, and a 4,000-item/20-page limit; hitting a limit marks that list unavailable.
 - Responses use `Cache-Control: no-store`. Errors expose safe categories and HTTP status, not raw upstream bodies, URLs or credentials. Kubernetes results omit pod environment/specifications, annotations and raw condition messages. Prometheus results omit arbitrary labels/annotations and scrape URLs.
 
@@ -75,6 +75,8 @@ The app has no authentication layer yet. Keep the dashboard behind trusted priva
 | `PROXMOX_ALLOW_SELF_SIGNED` | Explicit opt-in `true` for Proxmox-only certificate bypass; defaults to verified TLS |
 | `PROMETHEUS_URL`, `PROMETHEUS_BEARER_TOKEN` | Base URL and optional server-side bearer token |
 | `LOKI_URL`, `LOKI_BEARER_TOKEN`, `LOKI_TENANT_ID` | Base URL, optional bearer token and optional tenant |
+| `LOKI_RECENT_LOG_QUERY` | Optional scoped LogQL selector for bounded log timestamp/count metadata; raw logs are never serialized |
+| `PROMETHEUS_CONTAINER_QUERY` | Optional cAdvisor last-seen vector with unique `name` labels and Unix-second values |
 | `PROMETHEUS_{APOLLO,ATHENA,HERMES}_{CPU,MEMORY,STORAGE}_QUERY` | Nine optional host-specific PromQL percentage queries |
 | `KUBERNETES_KUBECONFIG`, `KUBERNETES_CONTEXT` | Explicit file path and optional context override; otherwise uses that file's current context |
 | `KUBERNETES_IN_CLUSTER` | Explicit `true` uses mounted service-account credentials when no kubeconfig file is configured |
@@ -130,7 +132,7 @@ For example, adapt the `instance` selector below to a verified Node Exporter tar
 
 Use Node Exporter or Proxmox Exporter series already scraped by Athena for Apollo, and Hermes series when available. Unconfigured queries remain unavailable. No exporter or other monitoring component is installed by Olympus.
 
-Loki reports readiness and validated label-name count. Grafana/Alloy/exporter service states remain unknown unless a dedicated verified source is added; Prometheus reachability does not imply every observability service is healthy. Prometheus alerts do not represent Grafana-managed alert rules.
+Loki reports readiness and validated label-name count, plus optional bounded log metadata. Container observations use optional cAdvisor series through Prometheus and are not application health checks. Prometheus reachability does not imply every observability service is healthy. Prometheus alerts do not represent Grafana-managed alert rules.
 
 #### Athena live verification and local setup
 
@@ -168,9 +170,31 @@ For a future dedicated credential, allow only `get`/`list` for core nodes/namesp
 
 ## UI and remaining work
 
-The original layout is preserved. Apollo cards prefer configured Prometheus readings, with explicit Proxmox data as fallback. VM states, cluster counts/version/pod summaries, alert counts/list and adapter states come from the API. No generated demo telemetry remains. Intended host/service inventory and network topology remain static and labeled; absent firewall/NAT/mesh telemetry is unknown. The camera remains an unconfigured placeholder. A failed refresh retains previous readings under a stale/error notice and their last-sync timestamp.
+The infrastructure overview has three independently represented hosts. Apollo displays Proxmox node CPU, memory, node disk and uptime, VM inventory/state/resources and storage inventory. VM disk capacity is labeled as allocation, not guest usage. Athena displays source connections, scrape targets, the configured hypervisor-observed VM 100 CPU/memory readings, Prometheus alerts, Loki metadata and cAdvisor observations. Athena guest attribution and Grafana-managed alerts remain explicitly not verified. Hermes displays Kubernetes version, node readiness, metrics-server usage with sample time/window, namespaces, pods, deployment readiness, services and ingresses. Completed pods remain completed rather than being counted as unhealthy running workloads.
 
-Pending: verify Athena guest filesystem attribution and any additional host PromQL selectors; add richer views for resource data already collected; implement Loki log/event queries, Grafana alert coverage and authentication; then prepare Kubernetes deployment manifests in a later milestone. Nothing has been installed on Hermes.
+The existing dark control-plane design now uses readable tables, mobile scrolling, keyboard focus, a working pod filter and a SYNC control at every viewport size. Static camera/network diagrams, intended service inventory and the claim that Olympus is deployed on Hermes were removed. Artemis remains identified as the management role without manufactured workstation telemetry. No mock runtime metrics or historical verification snapshots are used as live data.
+
+Every source shows its observation or attempt timestamp. Missing readings are `Unavailable`, absent configuration is `Not configured`, known attribution gaps are `Not verified`, and malformed/upstream failures are `Error`. Host power/readiness evidence is separate from adapter reachability; one failed backend does not set every host offline. A failed refresh preserves the previous snapshot with an explicit stale notice; snapshots older than five minutes are also marked stale. Freshness badges mean recent **at that synchronization**, never a continuously monitored guarantee.
+
+### Optional observation metadata
+
+These additive fields preserve `schemaVersion: 1` and all existing response fields. They are omitted unless their respective server-only queries are configured. A configured query failure produces an unavailable reading and a partial adapter without losing other readings:
+
+- `adapters.loki.data.recentLogs`: `Reading<{ latestEntryAt, inspectedEntries, windowSeconds }>`. A backward query inspects at most 20 entries in 15 minutes, then discards all log bodies and stream labels. An empty window returns a successful count of zero and a null latest timestamp, not an offline status. Entry timestamps measure log time, not Loki receipt time.
+- `adapters.prometheus.data.containers`: `Reading<Array<{ name, lastSeenAt }>>`. Collection projects only unique names and last-seen timestamps, rejects malformed/ambiguous/future values, and caps results at 4,000 series. Arbitrary labels, container specs and scrape URLs remain excluded. Last-seen series do not establish application readiness.
+
+The previously verified Athena selectors are enabled only in ignored `.env.local`. Example selectors for the same existing services, to use only after confirming their scope:
+
+```dotenv
+LOKI_RECENT_LOG_QUERY='{container=~".+"}'
+PROMETHEUS_CONTAINER_QUERY='container_last_seen{job="cadvisor",name!=""}'
+```
+
+The overview deliberately labels the established Athena CPU/memory queries as hypervisor-observed via Proxmox Exporter; do not replace them with guest or unrelated selectors without updating their verified provenance. The Loki range format follows the [Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/). Kubernetes usage conversion follows [Kubernetes quantities](https://kubernetes.io/docs/reference/kubernetes-api/definitions/quantity-resource/), preserving unknown/invalid readings instead of converting them to zero.
+
+The full suite now contains 35 tests, covering successful data, independent failures, missing/malformed observations, freshness, Kubernetes quantity conversion, empty versus unavailable readings, and credential/log-label redaction. Run `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check` before committing.
+
+Pending: establish Athena guest telemetry attribution and Grafana alert access, then consider authenticated access and deployment in a later milestone. Nothing has been installed or changed on Apollo, Athena or Hermes by this overview milestone.
 
 The Dockerfile builds the application image with `npm ci`; `.dockerignore` excludes local environment files, cluster credentials and archives. Optional local Compose reads `.env.local` and binds localhost. If using local Compose with file-based credentials, supply those files through an explicit read-only mount you control; host file paths do not exist automatically in the container. Production remains targeted at Hermes/K3s.
 

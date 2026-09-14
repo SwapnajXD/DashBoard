@@ -2,6 +2,7 @@ import "server-only";
 import { resolveHostAddress } from "../config/hosts";
 import type { AdapterStatus, HostConfig, HostMetrics, MetricSample, PrometheusData, Reading } from "../types/infrastructure";
 import { array, collected, endpoint, failed, object, reading, request, string, TelemetryFailure, unavailable } from "./shared";
+import { normalizeContainers } from "./observations";
 
 // A single finite sample is required: silently taking the first series can assign another host's metrics.
 export function normalizeSample(value: unknown): MetricSample {
@@ -42,7 +43,8 @@ export async function getPrometheusStatus(host: HostConfig, transport = request)
       if (body.status !== "success") throw new TelemetryFailure("upstream", "Prometheus API did not succeed.");
       return object(body.data);
     };
-    const [targets, alerts, apollo, athena, hermes] = await Promise.all([
+    const containerQuery = process.env.PROMETHEUS_CONTAINER_QUERY?.trim();
+    const [targets, alerts, apollo, athena, hermes, containers] = await Promise.all([
       reading(async () => array((await api("targets")).activeTargets).map(value => {
         const target = object(value); const labels = object(target.labels);
         return { job: string(labels.job), instance: string(labels.instance), health: target.health === "up" ? "online" as const : target.health === "down" ? "offline" as const : "unknown" as const, lastScrape: string(target.lastScrape) };
@@ -52,7 +54,8 @@ export async function getPrometheusStatus(host: HostConfig, transport = request)
         return { name: string(labels.alertname) ?? "Unnamed alert", state: string(alert.state) ?? "unknown", activeAt: string(alert.activeAt) };
       })),
       metricsFor("APOLLO"), metricsFor("ATHENA"), metricsFor("HERMES"),
+      containerQuery ? reading(async () => normalizeContainers(await transport(base, `/api/v1/query?${new URLSearchParams({ query: containerQuery, timeout: "4s" })}`, options))) : undefined,
     ]);
-    return collected({ healthy: true, targets, alerts, metrics: { apollo, athena, hermes } }, [targets, alerts, ...Object.values(apollo), ...Object.values(athena), ...Object.values(hermes)]);
+    return collected({ healthy: true, targets, alerts, metrics: { apollo, athena, hermes }, ...(containers ? { containers } : {}) }, [targets, alerts, ...Object.values(apollo), ...Object.values(athena), ...Object.values(hermes), ...(containers ? [containers] : [])]);
   } catch (error) { return failed(error); }
 }

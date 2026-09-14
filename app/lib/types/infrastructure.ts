@@ -51,8 +51,12 @@ export type PrometheusData = {
   targets: Reading<{ job: string | null; instance: string | null; health: HostStatus; lastScrape: string | null }[]>;
   alerts: Reading<{ name: string; state: string; activeAt: string | null }[]>;
   metrics: Record<"apollo" | "athena" | "hermes", HostMetrics>;
+  containers?: Reading<{ name: string; lastSeenAt: string }[]>;
 };
-export type LokiData = { ready: true; labelCount: Reading<number> };
+export type LokiData = {
+  ready: true; labelCount: Reading<number>;
+  recentLogs?: Reading<{ latestEntryAt: string | null; inspectedEntries: number; windowSeconds: number }>;
+};
 export type KubernetesNode = {
   name: string; status: HostStatus; roles: string[]; kubeletVersion: string | null;
   capacity: { cpu: string | null; memory: string | null };

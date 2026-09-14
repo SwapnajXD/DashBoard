@@ -1,7 +1,7 @@
 import type { HostStatus, InfrastructureResponse } from "../types/infrastructure";
 
 export function ratioPercent(used: number | null | undefined, total: number | null | undefined): number | null {
-  return used != null && total != null && Number.isFinite(used) && Number.isFinite(total) && total > 0 ? used / total * 100 : null;
+  return used != null && total != null && Number.isFinite(used) && Number.isFinite(total) && used >= 0 && total > 0 && used <= total ? used / total * 100 : null;
 }
 export function infrastructureView(response: InfrastructureResponse | null) {
   const host = (id: string) => response?.hosts.find(item => item.host.id === id);
