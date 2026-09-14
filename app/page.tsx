@@ -23,21 +23,21 @@ export default function HomePage() {
   const [clock, setClock] = useState<number | null>(null);
   const request = useRef<AbortController | null>(null);
   const refresh = useCallback(async () => {
-    request.current?.abort();
+    if (request.current) return;
     const controller = new AbortController(); request.current = controller;
-    setSyncing(true); setError("");
+    setSyncing(true);
     const timer = setTimeout(() => controller.abort("timeout"), 25000);
     try {
       const response = await fetch("/api/infrastructure", { cache: "no-store", signal: controller.signal });
       if (!response.ok) throw new Error("Request failed");
       const result: unknown = await response.json();
       if (!isInfrastructureResponse(result)) throw new Error("Invalid response");
-      if (request.current === controller) { setData(result); setClock(Date.now()); }
+      if (request.current === controller) { setData(result); setClock(Date.now()); setError(""); }
     } catch {
-      if (request.current === controller && (!controller.signal.aborted || controller.signal.reason === "timeout")) setError("Synchronization failed. Retained observations are stale; their timestamps have not changed.");
+      if (request.current === controller && (!controller.signal.aborted || controller.signal.reason === "timeout")) setError("Synchronization failed. Any retained observations are stale; their timestamps have not changed.");
     } finally {
       clearTimeout(timer);
-      if (request.current === controller) setSyncing(false);
+      if (request.current === controller) { request.current = null; setSyncing(false); }
     }
   }, []);
   useEffect(() => { void refresh(); const timer = setInterval(() => setClock(Date.now()), 30000); return () => { request.current?.abort(); request.current = null; clearInterval(timer); }; }, [refresh]);
