@@ -16,5 +16,7 @@ export default function HomePage() {
     { name: "Proxmox", host: "Apollo", description: "Virtualization console", href: toolUrl(process.env.PROXMOX_URL) },
     { name: "Prometheus", host: "Athena", description: "Metrics and query explorer", href: toolUrl(process.env.PROMETHEUS_URL) },
     { name: "Grafana", host: "Athena", description: "Existing observability dashboards", href: toolUrl(process.env.GRAFANA_URL, true) },
+    ...(process.env.LOKI_URL ? [{ name: "Loki", host: "Athena", description: "Log service endpoint", href: toolUrl(process.env.LOKI_URL) }] : []),
+    ...(process.env.ALLOY_URL ? [{ name: "Alloy", host: "Athena", description: "Telemetry collector interface", href: toolUrl(process.env.ALLOY_URL) }] : []),
   ]} />;
 }

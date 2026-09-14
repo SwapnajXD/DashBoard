@@ -21,14 +21,14 @@ export function SampleNote({ source, sampledAt, observedAt, window }: { source: 
 export function FreshnessBadge({ state }: { state: string }) {
   return <Badge label={state} tone={state === "Recent at sync" ? "good" : state === "Older at sync" ? "warn" : state === "Error" || state === "Invalid timestamp" ? "bad" : "muted"} />;
 }
-export function VmDetail({ vm, at }: { vm: ProxmoxResource; at?: string }) {
-  return <Disclosure name={vm.name ?? "Unnamed VM"} subtitle={`VM ${vm.vmId ?? "Unavailable"} · ${vm.node}`} summary={<><Preview label="CPU">{percent(vm.cpuRatio == null ? null : vm.cpuRatio * 100)}</Preview><Preview label="Memory">{bytes(vm.memoryUsedBytes)}</Preview><HostState status={vm.status} /></>}>
+export function VmDetail({ vm, at, open }: { open?: boolean; vm: ProxmoxResource; at?: string }) {
+  return <Disclosure open={open} name={vm.name ?? "Unnamed VM"} subtitle={`VM ${vm.vmId ?? "Unavailable"} · ${vm.node}`} summary={<><Preview label="CPU">{percent(vm.cpuRatio == null ? null : vm.cpuRatio * 100)}</Preview><Preview label="Memory">{bytes(vm.memoryUsedBytes)}</Preview><HostState status={vm.status} /></>}>
     <div className="metrics three"><Metric label="VM CPU" value={percent(vm.cpuRatio == null ? null : vm.cpuRatio * 100)} detail={`${vm.cpuCount ?? "Unavailable"} vCPUs`} source="Proxmox VM inventory" utilization={vm.cpuRatio == null ? null : vm.cpuRatio * 100} /><Metric label="Memory used" value={bytes(vm.memoryUsedBytes)} detail={`of ${bytes(vm.memoryTotalBytes)}`} source="Proxmox VM inventory" utilization={ratioPercent(vm.memoryUsedBytes, vm.memoryTotalBytes)} /><Metric label="Disk allocation" value={bytes(vm.storageTotalBytes)} detail="Allocated capacity · guest usage unavailable" source="Proxmox VM inventory" /></div>
     <Fields values={[["VM ID", vm.vmId], ["Hypervisor node", vm.node], ["Uptime", duration(vm.uptimeSeconds)], ["Resource type", vm.type]]} /><SampleNote source="Proxmox · VM inventory" observedAt={at} />
   </Disclosure>;
 }
-export function StorageDetail({ item, at }: { item: ProxmoxResource; at?: string }) {
-  return <Disclosure name={item.name ?? item.id} subtitle={item.node} summary={<><Preview label="Used">{bytes(item.storageUsedBytes)}</Preview><Preview label="Utilization">{percent(ratioPercent(item.storageUsedBytes, item.storageTotalBytes))}</Preview></>}>
+export function StorageDetail({ item, at, open }: { open?: boolean; item: ProxmoxResource; at?: string }) {
+  return <Disclosure open={open} name={item.name ?? item.id} subtitle={item.node} summary={<><Preview label="Used">{bytes(item.storageUsedBytes)}</Preview><Preview label="Utilization">{percent(ratioPercent(item.storageUsedBytes, item.storageTotalBytes))}</Preview></>}>
     <div className="metrics two"><Metric label="Storage used" value={bytes(item.storageUsedBytes)} detail={`of ${bytes(item.storageTotalBytes)}`} source="Proxmox storage inventory" utilization={ratioPercent(item.storageUsedBytes, item.storageTotalBytes)} /><Metric label="Capacity" value={bytes(item.storageTotalBytes)} source="Proxmox storage inventory" /></div><Fields values={[["Resource ID", item.id], ["Node", item.node], ["Type", item.type], ["Reported state", <HostState status={item.status} />]]} /><SampleNote source="Proxmox · storage inventory" observedAt={at} />
   </Disclosure>;
 }
@@ -54,6 +54,6 @@ export function PodDetail({ pod, metrics, inventoryAt, open }: { open?: boolean;
   </Disclosure>;
 }
 type Service = NonNullable<KubernetesData["services"]["data"]>[number];
-export function ServiceDetail({ item, at }: { item: Service; at?: string }) {
-  return <Disclosure name={item.name} subtitle={item.namespace} summary={<><Preview label="Type">{item.type ?? "Unavailable"}</Preview><Preview label="Ports">{item.ports.length}</Preview></>}><Fields values={[["Namespace", item.namespace], ["Service type", item.type], ["Exposed ports", item.ports.length ? item.ports.map(p => `${p.port}/${p.protocol ?? "Unknown protocol"}`).join(", ") : "None returned"]]} /><p className="detail-caption">Endpoint addresses and backend health are not included in this inventory.</p><SampleNote source="Kubernetes API · services" observedAt={at} /></Disclosure>;
+export function ServiceDetail({ item, at, open }: { open?: boolean; item: Service; at?: string }) {
+  return <Disclosure open={open} name={item.name} subtitle={item.namespace} summary={<><Preview label="Type">{item.type ?? "Unavailable"}</Preview><Preview label="Ports">{item.ports.length}</Preview></>}><Fields values={[["Namespace", item.namespace], ["Service type", item.type], ["Exposed ports", item.ports.length ? item.ports.map(p => `${p.port}/${p.protocol ?? "Unknown protocol"}`).join(", ") : "None returned"]]} /><p className="detail-caption">Endpoint addresses and backend health are not included in this inventory.</p><SampleNote source="Kubernetes API · services" observedAt={at} /></Disclosure>;
 }

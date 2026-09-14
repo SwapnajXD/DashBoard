@@ -3,7 +3,8 @@ import type { AdapterStatus, Reading } from "../lib/types/infrastructure";
 import { adapterLabel, observation, readingLabel } from "../lib/infrastructure/overview";
 
 export function Badge({ label, tone = "muted" }: { label: string; tone?: "good" | "warn" | "bad" | "muted" }) {
-  return <span className={`badge ${tone}`}><span aria-hidden="true" />{label}</span>;
+  const symbol = tone === "warn" ? "⚠" : tone === "bad" || label.toLowerCase() === "unavailable" ? "×" : tone === "good" ? "●" : "○";
+  return <span className={`badge ${tone}`}><span aria-hidden="true">{symbol}</span>{label}</span>;
 }
 export function HostState({ status }: { status?: string }) {
   return <Badge label={status === "online" ? "Online" : status === "offline" ? "Offline" : "Unavailable"} tone={status === "online" ? "good" : status === "offline" ? "bad" : "muted"} />;
@@ -22,4 +23,8 @@ export function Collection({ title, source, reading, children, empty = "No resou
 }
 export function DataTable({ label, columns, children }: { label: string; columns: string[]; children: React.ReactNode }) {
   return <div className="table-scroll" tabIndex={0} role="region" aria-label={label}><table><caption className="sr-only">{label}</caption><thead><tr>{columns.map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead><tbody>{children}</tbody></table></div>;
+}
+
+export function SectionHeading({ number, title, note }: { number: string; title: string; note?: string }) {
+  return <div className="section-label"><h2><span className="section-index">{number} /</span> {title}</h2>{note ? <span>{note}</span> : null}</div>;
 }
