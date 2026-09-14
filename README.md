@@ -6,7 +6,7 @@ Olympus is a Next.js dashboard with a single server-side infrastructure API.
 | --- | --- |
 | Apollo | Proxmox infrastructure host |
 | Athena | VM 100: Prometheus, Grafana, Loki, Alloy, Node Exporter, cAdvisor and Proxmox Exporter |
-| Hermes | VM 101: single-node K3s/Kubernetes; eventual Olympus deployment target |
+| Hermes | VM 101: single-node K3s/Kubernetes |
 | Artemis | Management/admin workstation |
 
 ## Run and verify
@@ -89,7 +89,7 @@ Latest follow-up: [Athena ingestion, guest attribution, Grafana access and Herme
 
 ### Apollo
 
-The read-only Proxmox adapter collects `/nodes`, `/cluster/resources?type=vm`, and `/cluster/resources?type=storage` independently. It normalizes status, CPU ratio/count, memory, storage capacity/use, uptime, and VM identity where returned. VM 100 maps to Athena; VM 101 maps to Hermes. Missing fields remain `null`. API visibility depends on token permissions. Apollo live verification is pending local endpoint/credential configuration.
+The read-only Proxmox adapter collects `/nodes`, `/cluster/resources?type=vm`, and `/cluster/resources?type=storage` independently. It normalizes status, CPU ratio/count, memory, storage capacity/use, uptime, and VM identity where returned. VM 100 maps to Athena; VM 101 maps to Hermes. Missing fields remain `null`. API visibility depends on token permissions. Apollo live verification succeeded with verified TLS and a PVEAuditor token; see the dated verification records.
 
 #### Configure Apollo locally
 
@@ -115,10 +115,10 @@ Prefer a trusted certificate or set `PROXMOX_CA_FILE` to a local trusted CA PEM 
 1. Configure the values locally, restart `npm run dev`, and open Olympus on localhost.
 2. Press SYNC. In the browser's network panel, inspect only the local `/api/infrastructure` response. Locate `hosts` → Apollo → `adapters.proxmox`; the response must not contain the token, authorization header, or configured endpoint.
 3. Confirm `nodes.data` contains the configured Apollo node and actual status/CPU/memory readings. Check `vms.data` for actual VM IDs, names, states and resources, including VM 100/Athena and VM 101/Hermes if visible to the token. Check `storage.data` for visible storage resources. Do not treat an empty permission-filtered inventory as proof that Apollo has no resources.
-4. Confirm the existing Apollo cards show CPU/RAM and node disk utilization where supplied, uptime, and observed VM states. Storage pool inventory is available in the API; it is not summed into the node disk card. Missing values remain unavailable. Configured Prometheus samples retain their existing precedence over Proxmox card readings.
+4. Confirm the existing Apollo cards show CPU/RAM and node disk utilization where supplied, uptime, and observed VM states. Storage pool inventory is available in the API; it is not summed into the node disk card. Missing values remain unavailable. Apollo cards use Proxmox directly; Athena’s explicitly labelled hypervisor-observed readings use Prometheus.
 5. Diagnose using the sanitized adapter/reading error: `unconfigured` for missing endpoint/token, `unauthorized` for HTTP 401/403, `unreachable`/`timeout` for transport failures, and `invalid_response` for malformed data or resource identities. One failed resource list yields `partial` when another succeeds. An Apollo failure leaves independent host results available and does not prove Apollo is powered off.
 
-Local automated verification: `npm run typecheck`, `npm test`, and `npm run build`. The suite retains the original 17 tests and adds five Apollo-focused tests with injected API fixtures; no real credentials are required. These tests verify the integration contract, not live Apollo telemetry. Live verification remains pending until the local endpoint, read-only credentials and TLS trust are configured.
+Local automated verification: `npm run typecheck`, `npm test`, and `npm run build`. The suite retains the original 17 tests and adds five Apollo-focused tests with injected API fixtures; no real credentials are required. These tests verify the integration contract, not live Apollo telemetry. These fixture checks do not replace the dated live verification records.
 
 ### Athena
 
@@ -158,15 +158,15 @@ PROMETHEUS_ATHENA_MEMORY_QUERY='100 * pve_memory_usage_bytes{job="proxmox",insta
 
 After changing local configuration, restart Olympus or confirm the development server reloaded it, then press SYNC. Inspect Athena's `adapters.prometheus.data.metrics.athena`, `targets`, `alerts`, and `adapters.loki` in the local API response. Empty/ambiguous/non-finite/out-of-range percentages remain unavailable. Readiness and individual resource failures remain isolated. The existing UI is preserved; Athena CPU/memory are currently available through the API, while existing integration/service indicators and alerts use their established views.
 
-The regression suite now has 27 tests, including five Athena-focused tests for missing endpoints, exact query/authentication forwarding, percentage failure isolation, sanitized connection/authentication failures, and Loki label validation. Fixtures require no live credentials. Run `npm test`, `npm run typecheck`, and `npm run build` after changes. Protocol details: [Prometheus HTTP API](https://prometheus.io/docs/prometheus/latest/querying/api/) and [Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/).
+The Athena milestone added five focused tests for missing endpoints, exact query/authentication forwarding, percentage failure isolation, sanitized connection/authentication failures, and Loki label validation. Fixtures require no live credentials. Run `npm test`, `npm run typecheck`, and `npm run build` after changes. Protocol details: [Prometheus HTTP API](https://prometheus.io/docs/prometheus/latest/querying/api/) and [Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/).
 
 ### Hermes
 
-The server-side adapter uses the official JavaScript client's kubeconfig handling and makes read-only API requests for version, nodes, namespaces, pods (including regular/init/ephemeral container state), deployments, services, networking/v1 ingresses and metrics.k8s.io node usage. CPU/memory capacity, allocatable resources and usage retain Kubernetes quantity units and sample timestamps. Prometheus remains the primary historical host telemetry source; metrics-server usage is a current Kubernetes snapshot.
+The server-side adapter uses the official JavaScript client's kubeconfig handling and makes read-only API requests for version, nodes, namespaces, pods (including regular/init/ephemeral container state), deployments, services, networking/v1 ingresses and metrics.k8s.io node and pod/container usage. CPU/memory capacity, allocatable resources and usage retain Kubernetes quantity units and sample timestamps. Prometheus remains the primary historical host telemetry source; metrics-server usage is a current Kubernetes snapshot.
 
 Live read-only verification on 2026-09-12, reconfirmed on 2026-09-14, succeeded using Artemis's existing `hermes` context: K3s `v1.36.4+k3s1`, one Ready `hermes` control-plane node, four namespaces, seven pods, four deployments, four services, zero ingress resources and one node-metrics record. The [latest verification](docs/verification-2026-09-14.md) records CPU/memory usage and resource readiness. These are verification observations, not hardcoded application values. Traefik, CoreDNS, metrics-server, local-path-provisioner, Flannel and K3s ServiceLB are the intended existing cluster components; the adapter discovers API resources instead of manufacturing inventory.
 
-For a future dedicated credential, allow only `get`/`list` for core nodes/namespaces/pods/services, apps deployments, networking.k8s.io ingresses, and metrics.k8s.io nodes, plus read access to `/version`. No Secrets access or write verbs are needed. The adapter does not enforce or grant RBAC permissions; a missing permission marks that resource unavailable. No RBAC or deployment manifests are created in this milestone.
+For a future dedicated credential, allow only `get`/`list` for core nodes/namespaces/pods/services, apps deployments, networking.k8s.io ingresses, and metrics.k8s.io nodes/pods, plus read access to `/version`. No Secrets access or write verbs are needed. The adapter does not enforce or grant RBAC permissions; a missing permission marks that resource unavailable. No RBAC or deployment manifests are created in this milestone.
 
 ## UI and remaining work
 
@@ -192,10 +192,12 @@ PROMETHEUS_CONTAINER_QUERY='container_last_seen{job="cadvisor",name!=""}'
 
 The overview deliberately labels the established Athena CPU/memory queries as hypervisor-observed via Proxmox Exporter; do not replace them with guest or unrelated selectors without updating their verified provenance. The Loki range format follows the [Loki HTTP API](https://grafana.com/docs/loki/latest/reference/loki-http-api/). Kubernetes usage conversion follows [Kubernetes quantities](https://kubernetes.io/docs/reference/kubernetes-api/definitions/quantity-resource/), preserving unknown/invalid readings instead of converting them to zero.
 
-The full suite now contains 35 tests, covering successful data, independent failures, missing/malformed observations, freshness, Kubernetes quantity conversion, empty versus unavailable readings, and credential/log-label redaction. Run `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check` before committing.
+The regression suite covers successful data, independent failures, missing/malformed observations, freshness, Kubernetes quantity conversion, empty versus unavailable readings, and credential/log-label redaction. The post-milestone audit adds Metrics API success, partial/malformed/missing data, staleness and nested contract validation cases. Run `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check` before committing.
 
 Pending: establish Athena guest telemetry attribution and Grafana alert access, then consider authenticated access and deployment in a later milestone. Nothing has been installed or changed on Apollo, Athena or Hermes by this overview milestone.
 
 The Dockerfile builds the application image with `npm ci`; `.dockerignore` excludes local environment files, cluster credentials and archives. Optional local Compose reads `.env.local` and binds localhost. If using local Compose with file-based credentials, supply those files through an explicit read-only mount you control; host file paths do not exist automatically in the container. Production remains targeted at Hermes/K3s.
 
 Protocol references: [Proxmox API](https://pve.proxmox.com/wiki/Proxmox_VE_API), [Prometheus HTTP API](https://prometheus.io/docs/prometheus/latest/querying/api/), [Kubernetes API concepts](https://kubernetes.io/docs/reference/using-api/api-concepts/) and [official JavaScript client](https://github.com/kubernetes-client/javascript).
+
+The [post-milestone repository audit](docs/architecture-audit.md) records source/timestamp semantics, hardening changes, and remaining verification limits. Hermes now presents a concise node resource summary and pod totals with expandable per-container samples. Pod totals require complete, exactly matched container samples; partial container values remain individually usable. Missing metrics never become zero. The pod/container Metrics API path is fixture-tested but has not been live-verified during this repository-only audit.
