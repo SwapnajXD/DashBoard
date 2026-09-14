@@ -6,6 +6,7 @@ import { Agent } from "undici";
 import { KubeConfig } from "@kubernetes/client-node";
 import type { AdapterStatus, HostConfig, KubernetesContainer, KubernetesData, KubernetesNode, KubernetesPod } from "../types/infrastructure";
 import { array, collected, endpoint, failed, finite, object, reading, request, string, TelemetryFailure, type TransportOptions } from "./shared";
+import { normalizeNodeMetrics, normalizePodMetrics, uniqueMetrics } from "./kubernetes-metrics";
 
 export function isPrivateAddress(address: string): boolean {
   if (address.startsWith("::ffff:")) return isPrivateAddress(address.slice(7));
@@ -54,11 +55,15 @@ export async function loadKubernetesConnection(): Promise<{ base: string; option
   }
 }
 
-function metadata(value: unknown) {
+const count = (value: unknown) => { const result = finite(value); return result !== null && Number.isInteger(result) && result >= 0 ? result : null; };
+
+function metadata(value: unknown, namespaced = false) {
   const item = object(value); const meta = object(item.metadata);
   const name = string(meta.name);
-  if (!name) throw new TelemetryFailure("invalid_response", "Kubernetes resource has no name.");
-  return { item, name, namespace: string(meta.namespace) ?? "default", meta };
+  if (!name?.trim()) throw new TelemetryFailure("invalid_response", "Kubernetes resource has no name.");
+  const namespace = string(meta.namespace);
+  if (namespaced && !namespace?.trim()) throw new TelemetryFailure("invalid_response", "Kubernetes resource has no namespace.");
+  return { item, name, namespace: namespace ?? "", meta };
 }
 export function normalizeNode(value: unknown): KubernetesNode {
   const { item, name, meta } = metadata(value); const status = object(item.status ?? {});
@@ -73,7 +78,7 @@ export function normalizeNode(value: unknown): KubernetesNode {
   };
 }
 export function normalizePod(value: unknown): KubernetesPod {
-  const { item, name, namespace } = metadata(value);
+  const { item, name, namespace } = metadata(value, true);
   const spec = object(item.spec ?? {}); const status = object(item.status ?? {});
   const containers: KubernetesContainer[] = [];
   for (const [specKey, statusKey, kind] of [["containers", "containerStatuses", "container"], ["initContainers", "initContainerStatuses", "init"], ["ephemeralContainers", "ephemeralContainerStatuses", "ephemeral"]] as const) {
@@ -83,7 +88,7 @@ export function normalizePod(value: unknown): KubernetesPod {
       const state = object(container?.state ?? {});
       const phase = state.running ? "running" : state.waiting ? "waiting" : state.terminated ? "terminated" : "unknown";
       containers.push({ name: string(declared.name) ?? "unknown", kind, ready: typeof container?.ready === "boolean" ? container.ready : null,
-        restartCount: finite(container?.restartCount), state: phase, reason: phase === "unknown" ? null : string(object(state[phase]).reason) });
+        restartCount: count(container?.restartCount), state: phase, reason: phase === "unknown" ? null : string(object(state[phase]).reason) });
     }
   }
   // Never serialize pod specs, environment variables, annotations or raw condition messages.
@@ -99,7 +104,9 @@ export async function listResources(base: string, path: string, options: Transpo
     const body = object(await transport(base, `${path}?${params}`, options));
     result.push(...array(body.items));
     if (result.length > 4000) throw new TelemetryFailure("unavailable", "Resource list exceeds the collection limit.");
-    continuation = string(object(body.metadata ?? {}).continue) ?? "";
+    const next = object(body.metadata ?? {}).continue;
+    if (next != null && typeof next !== "string") throw new TelemetryFailure("invalid_response", "Resource continuation token is invalid.");
+    continuation = next ?? "";
     if (!continuation) return result;
   }
   throw new TelemetryFailure("unavailable", "Resource pagination exceeds the collection limit.");
@@ -111,7 +118,7 @@ export async function getKubernetesStatus(_host: HostConfig, connect = loadKuber
     connection = await connect();
     const { base, options } = connection;
     const list = (path: string) => listResources(base, path, options, transport);
-    const [version, nodes, namespaces, pods, deployments, services, ingresses, nodeMetrics] = await Promise.all([
+    const [version, nodes, namespaces, pods, deployments, services, ingresses, nodeMetrics, podMetrics] = await Promise.all([
       reading(async () => {
         const value = string(object(await transport(base, "/version", options)).gitVersion);
         if (!value) throw new TelemetryFailure("invalid_response", "Kubernetes version is missing.");
@@ -121,31 +128,31 @@ export async function getKubernetesStatus(_host: HostConfig, connect = loadKuber
       reading(async () => (await list("/api/v1/namespaces")).map(item => metadata(item).name)),
       reading(async () => (await list("/api/v1/pods")).map(normalizePod)),
       reading(async () => (await list("/apis/apps/v1/deployments")).map(value => {
-        const { item, name, namespace } = metadata(value); const status = object(item.status ?? {});
-        return { name, namespace, desired: finite(object(item.spec ?? {}).replicas), ready: finite(status.readyReplicas), available: finite(status.availableReplicas) };
+        const { item, name, namespace } = metadata(value, true); const status = object(item.status ?? {});
+        return { name, namespace, desired: count(object(item.spec ?? {}).replicas), ready: count(status.readyReplicas), available: count(status.availableReplicas) };
       })),
       reading(async () => (await list("/api/v1/services")).map(value => {
-        const { item, name, namespace } = metadata(value); const spec = object(item.spec ?? {});
+        const { item, name, namespace } = metadata(value, true); const spec = object(item.spec ?? {});
         return { name, namespace, type: string(spec.type), ports: array(spec.ports ?? []).map(value => {
           const port = object(value); const number = finite(port.port);
-          if (number === null) throw new TelemetryFailure("invalid_response", "Service port is invalid.");
+          if (number === null || !Number.isInteger(number) || number < 1 || number > 65535) throw new TelemetryFailure("invalid_response", "Service port is invalid.");
           return { port: number, protocol: string(port.protocol) };
         }) };
       })),
       reading(async () => (await list("/apis/networking.k8s.io/v1/ingresses")).map(value => {
-        const { item, name, namespace } = metadata(value); const spec = object(item.spec ?? {});
+        const { item, name, namespace } = metadata(value, true); const spec = object(item.spec ?? {});
         return { name, namespace, className: string(spec.ingressClassName), hosts: array(spec.rules ?? []).map(rule => string(object(rule).host)).filter((host): host is string => host !== null) };
       })),
-      reading(async () => (await list("/apis/metrics.k8s.io/v1beta1/nodes")).map(value => {
-        const { item, name } = metadata(value); const usage = object(item.usage ?? {});
-        return { name, sampledAt: string(item.timestamp), window: string(item.window), cpu: string(usage.cpu), memory: string(usage.memory) };
-      })),
+      reading(async () => uniqueMetrics((await list("/apis/metrics.k8s.io/v1beta1/nodes")).map(value => normalizeNodeMetrics(value)))),
+      reading(async () => uniqueMetrics((await list("/apis/metrics.k8s.io/v1beta1/pods")).map(value => normalizePodMetrics(value)))),
     ]);
-    const readings = [version, nodes, namespaces, pods, deployments, services, ingresses, nodeMetrics];
+    const readings = [version, nodes, namespaces, pods, deployments, services, ingresses, nodeMetrics, podMetrics];
     if (readings.every(item => item.state === "unavailable")) {
       const error = version.error!; return failed(new TelemetryFailure(error.code, error.message));
     }
-    return collected({ apiReachable: true, version, nodes, namespaces, pods, deployments, services, ingresses, nodeMetrics }, readings);
+    const result = collected({ apiReachable: true as const, version, nodes, namespaces, pods, deployments, services, ingresses, nodeMetrics, podMetrics }, readings);
+    if (nodeMetrics.data?.some(item => item.error) || podMetrics.data?.some(item => item.error || item.containers.some(container => container.error))) result.state = "partial";
+    return result;
   } catch (error) { return failed(error); }
   finally { await connection?.close(); }
 }

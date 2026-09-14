@@ -71,6 +71,17 @@ export type KubernetesPod = {
   name: string; namespace: string; node: string | null; phase: string | null;
   containers: KubernetesContainer[];
 };
+export type KubernetesUsage = {
+  cpu: string | null; memory: string | null;
+  sampledAt: string | null; window: string | null;
+  error?: TelemetryError | null;
+};
+export type KubernetesPodMetrics = {
+  name: string; namespace: string;
+  sampledAt: string | null; window: string | null;
+  containers: { name: string; cpu: string | null; memory: string | null; error?: TelemetryError | null }[];
+  error?: TelemetryError | null;
+};
 export type KubernetesData = {
   apiReachable: true;
   version: Reading<string>;
@@ -80,7 +91,8 @@ export type KubernetesData = {
   deployments: Reading<{ name: string; namespace: string; desired: number | null; ready: number | null; available: number | null }[]>;
   services: Reading<{ name: string; namespace: string; type: string | null; ports: { port: number; protocol: string | null }[] }[]>;
   ingresses: Reading<{ name: string; namespace: string; className: string | null; hosts: string[] }[]>;
-  nodeMetrics: Reading<{ name: string; sampledAt: string | null; window: string | null; cpu: string | null; memory: string | null }[]>;
+  nodeMetrics: Reading<(KubernetesUsage & { name: string })[]>;
+  podMetrics?: Reading<KubernetesPodMetrics[]>;
 };
 export type AdapterData = { proxmox: ProxmoxData; prometheus: PrometheusData; loki: LokiData; kubernetes: KubernetesData };
 export type AdapterResults = { [K in AdapterKind]?: AdapterStatus<AdapterData[K]> };
