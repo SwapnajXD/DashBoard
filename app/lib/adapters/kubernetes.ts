@@ -81,13 +81,18 @@ export function normalizePod(value: unknown): KubernetesPod {
   const { item, name, namespace } = metadata(value, true);
   const spec = object(item.spec ?? {}); const status = object(item.status ?? {});
   const containers: KubernetesContainer[] = [];
+  const names = new Set<string>();
   for (const [specKey, statusKey, kind] of [["containers", "containerStatuses", "container"], ["initContainers", "initContainerStatuses", "init"], ["ephemeralContainers", "ephemeralContainerStatuses", "ephemeral"]] as const) {
     const statuses = array(status[statusKey] ?? []).map(object);
     for (const declared of array(spec[specKey] ?? []).map(object)) {
-      const container = statuses.find(entry => entry.name === declared.name);
+      const name = string(declared.name);
+      const matches = statuses.filter(entry => entry.name === name);
+      if (!name?.trim() || names.has(name) || matches.length > 1) throw new TelemetryFailure("invalid_response", "Pod container identity is missing or ambiguous.");
+      names.add(name);
+      const container = matches[0];
       const state = object(container?.state ?? {});
       const phase = state.running ? "running" : state.waiting ? "waiting" : state.terminated ? "terminated" : "unknown";
-      containers.push({ name: string(declared.name) ?? "unknown", kind, ready: typeof container?.ready === "boolean" ? container.ready : null,
+      containers.push({ name, kind, ready: typeof container?.ready === "boolean" ? container.ready : null,
         restartCount: count(container?.restartCount), state: phase, reason: phase === "unknown" ? null : string(object(state[phase]).reason) });
     }
   }
@@ -126,7 +131,7 @@ export async function getKubernetesStatus(_host: HostConfig, connect = loadKuber
       }),
       reading(async () => (await list("/api/v1/nodes")).map(normalizeNode)),
       reading(async () => (await list("/api/v1/namespaces")).map(item => metadata(item).name)),
-      reading(async () => (await list("/api/v1/pods")).map(normalizePod)),
+      reading(async () => uniqueMetrics((await list("/api/v1/pods")).map(normalizePod))),
       reading(async () => (await list("/apis/apps/v1/deployments")).map(value => {
         const { item, name, namespace } = metadata(value, true); const status = object(item.status ?? {});
         return { name, namespace, desired: count(object(item.spec ?? {}).replicas), ready: count(status.readyReplicas), available: count(status.availableReplicas) };

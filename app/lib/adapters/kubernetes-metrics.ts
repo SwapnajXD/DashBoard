@@ -33,6 +33,9 @@ export function normalizePodMetrics(value: unknown, now = Date.now()): Kubernete
   const { item, meta, name } = identity(value); const namespace = string(meta.namespace);
   if (!namespace?.trim()) throw new TelemetryFailure("invalid_response", "Pod metrics require an explicit namespace.");
   const sample = sampling(item, now); const names = new Set<string>();
+  if (!sample.error && now - Date.parse(sample.sampledAt!) > 120000) {
+    sample.error = { code: "unavailable", message: "Pod resource sample is older than two minutes." };
+  }
   const containers = array(item.containers).map(value => {
     const container = object(value); const name = string(container.name);
     if (!name?.trim() || names.has(name)) throw new TelemetryFailure("invalid_response", "Container metric identity is missing or ambiguous.");

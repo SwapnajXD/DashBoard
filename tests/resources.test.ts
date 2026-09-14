@@ -47,7 +47,9 @@ test("stale metrics keep their original timestamp and future/malformed samples c
   const result = nodeResources("hermes", await reading(async () => [normalizeNodeMetrics({ ...sample, timestamp: old }, now)]));
   assert.equal(result.state, "Older at sync"); assert.equal(result.cpu, .2); assert.equal(result.sample?.sampledAt, old);
   const pods = podResources(pod, await reading(async () => [normalizePodMetrics({ ...podSample, timestamp: old }, now)]));
-  assert.equal(pods.state, "Older at sync"); assert.equal(pods.sample?.sampledAt, old);
+  assert.equal(pods.state, "Unavailable"); assert.equal(pods.sample?.sampledAt, old);
+  assert.equal(pods.cpu, null); assert.equal(pods.memory, null);
+  assert.ok(pods.containers.every(container => container.cpu === null && container.memory === null));
   for (const timestamp of [undefined, "bad", new Date(now + 60000).toISOString()]) {
     const metric = normalizeNodeMetrics({ ...sample, timestamp }, now); assert.equal(metric.cpu, null); assert.equal(metric.error?.code, "invalid_response");
   }
