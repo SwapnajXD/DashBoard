@@ -22,7 +22,7 @@ const metric = reading(object({ value: number, sampledAt: time }));
 const metrics = object({ cpuPercent: metric, memoryPercent: metric, storagePercent: metric });
 const dataChecks: Record<string, Check> = {
   proxmox: object({ nodes: reading(list(resource)), vms: reading(list(resource)), storage: reading(list(resource)) }),
-  prometheus: object({ healthy: oneOf(true), targets: reading(list(object({ job: nullable(text), instance: nullable(text), health: status, lastScrape: nullable(time) }))), alerts: reading(list(object({ name: text, state: text, activeAt: nullable(time) }))), metrics: object({ apollo: metrics, athena: metrics, hermes: metrics }), containers: optional(reading(list(object({ name: text, lastSeenAt: time })))) }),
+  prometheus: object({ healthy: oneOf(true), targets: reading(list(object({ job: nullable(text), instance: nullable(text), health: status, lastScrape: nullable(time) }))), alerts: reading(list(object({ name: text, state: text, activeAt: nullable(time) }))), metrics: object({ apollo: metrics, athena: metrics, hermes: metrics }), containers: optional(reading(list(object({ name: text, lastSeenAt: time, cpuCores: optional(metric), memoryWorkingSetBytes: optional(metric) })))) }),
   loki: object({ ready: oneOf(true), labelCount: reading(number), recentLogs: optional(reading(object({ latestEntryAt: nullable(time), inspectedEntries: number, windowSeconds: number }))) }),
   kubernetes: object({
     apiReachable: oneOf(true), version: reading(text),

@@ -41,6 +41,11 @@ export type ProxmoxData = {
   storage: Reading<ProxmoxResource[]>;
 };
 export type MetricSample = { value: number; sampledAt: string };
+export type ContainerObservation = {
+  name: string; lastSeenAt: string;
+  cpuCores?: Reading<MetricSample>;
+  memoryWorkingSetBytes?: Reading<MetricSample>;
+};
 export type HostMetrics = {
   cpuPercent: Reading<MetricSample>;
   memoryPercent: Reading<MetricSample>;
@@ -51,7 +56,7 @@ export type PrometheusData = {
   targets: Reading<{ job: string | null; instance: string | null; health: HostStatus; lastScrape: string | null }[]>;
   alerts: Reading<{ name: string; state: string; activeAt: string | null }[]>;
   metrics: Record<"apollo" | "athena" | "hermes", HostMetrics>;
-  containers?: Reading<{ name: string; lastSeenAt: string }[]>;
+  containers?: Reading<ContainerObservation[]>;
 };
 export type LokiData = {
   ready: true; labelCount: Reading<number>;

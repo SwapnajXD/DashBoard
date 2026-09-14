@@ -2,7 +2,7 @@ import "server-only";
 import { resolveHostAddress } from "../config/hosts";
 import type { AdapterStatus, HostConfig, HostMetrics, MetricSample, PrometheusData, Reading } from "../types/infrastructure";
 import { array, collected, endpoint, failed, object, reading, request, string, TelemetryFailure, unavailable } from "./shared";
-import { normalizeContainers } from "./observations";
+import { getContainerObservations } from "./cadvisor";
 
 const timestamp = (value: unknown) => { const text = string(value); return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null; };
 
@@ -56,8 +56,8 @@ export async function getPrometheusStatus(host: HostConfig, transport = request)
         return { name: string(labels.alertname) ?? "Unnamed alert", state: string(alert.state) ?? "unknown", activeAt: timestamp(alert.activeAt) };
       })),
       metricsFor("APOLLO"), metricsFor("ATHENA"), metricsFor("HERMES"),
-      containerQuery ? reading(async () => normalizeContainers(await transport(base, `/api/v1/query?${new URLSearchParams({ query: containerQuery, timeout: "4s" })}`, options))) : undefined,
+      containerQuery ? getContainerObservations(base, containerQuery, options, transport) : undefined,
     ]);
-    return collected({ healthy: true, targets, alerts, metrics: { apollo, athena, hermes }, ...(containers ? { containers } : {}) }, [targets, alerts, ...Object.values(apollo), ...Object.values(athena), ...Object.values(hermes), ...(containers ? [containers] : [])]);
+    return collected({ healthy: true, targets, alerts, metrics: { apollo, athena, hermes }, ...(containers ? { containers } : {}) }, [targets, alerts, ...Object.values(apollo), ...Object.values(athena), ...Object.values(hermes), ...(containers ? [containers] : []), ...(containers?.data?.flatMap(container => [container.cpuCores!, container.memoryWorkingSetBytes!]) ?? [])]);
   } catch (error) { return failed(error); }
 }
