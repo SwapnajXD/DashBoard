@@ -1,94 +1,20 @@
-"use client";
+import Dashboard from "./components/dashboard";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDownRight, Layers3, Radio, RefreshCw, Server, Terminal } from "lucide-react";
-import type { InfrastructureResponse, Reading } from "./lib/types/infrastructure";
-import { ratioPercent } from "./lib/infrastructure/presentation";
-import { adapterLabel, bytes, deploymentReadiness, duration, freshness, isInfrastructureResponse, listOf, observation, percent, readingLabel, valueOf } from "./lib/infrastructure/overview";
-import { HermesResourceSummary, NodeResourcesTable, PodRows } from "./components/kubernetes-resources";
-import { Badge, Collection, DataTable, HostState, Metric, Source } from "./components/infrastructure";
+export const dynamic = "force-dynamic";
 
-const roles = [
-  { id: "apollo", name: "Apollo", role: "Proxmox infrastructure", icon: Server, number: "01" },
-  { id: "athena", name: "Athena", role: "Observability", icon: Radio, number: "02" },
-  { id: "hermes", name: "Hermes", role: "K3s / Kubernetes", icon: Layers3, number: "03" },
-] as const;
-const count = (reading?: Reading<unknown[]>) => listOf(reading)?.length ?? readingLabel(reading);
-const numeric = (value: number | null | undefined) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : "Unavailable";
-
+// Publish only explicitly configured, credential-free tool URLs, never the environment object.
+function toolUrl(value: string | undefined, grafana = false): string | null {
+  if (!value?.trim()) return null;
+  try {
+    const input = value.trim();
+    const url = new URL(grafana && !input.includes("://") ? `http://${input}` : input);
+    return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash && (grafana || url.pathname === "/" || url.pathname === "") ? url.href : null;
+  } catch { return null; }
+}
 export default function HomePage() {
-  const [data, setData] = useState<InfrastructureResponse | null>(null);
-  const [syncing, setSyncing] = useState(true);
-  const [error, setError] = useState("");
-  const [podFilter, setPodFilter] = useState("");
-  const [clock, setClock] = useState<number | null>(null);
-  const request = useRef<AbortController | null>(null);
-  const refresh = useCallback(async () => {
-    if (request.current) return;
-    const controller = new AbortController(); request.current = controller;
-    setSyncing(true);
-    const timer = setTimeout(() => controller.abort("timeout"), 25000);
-    try {
-      const response = await fetch("/api/infrastructure", { cache: "no-store", signal: controller.signal });
-      if (!response.ok) throw new Error("Request failed");
-      const result: unknown = await response.json();
-      if (!isInfrastructureResponse(result)) throw new Error("Invalid response");
-      if (request.current === controller) { setData(result); setClock(Date.now()); setError(""); }
-    } catch {
-      if (request.current === controller && (!controller.signal.aborted || controller.signal.reason === "timeout")) setError("Synchronization failed. Any retained observations are stale; their timestamps have not changed.");
-    } finally {
-      clearTimeout(timer);
-      if (request.current === controller) { request.current = null; setSyncing(false); }
-    }
-  }, []);
-  useEffect(() => { void refresh(); const timer = setInterval(() => setClock(Date.now()), 30000); return () => { request.current?.abort(); request.current = null; clearInterval(timer); }; }, [refresh]);
-
-  const host = (id: string) => data?.hosts.find(item => item.host.id === id);
-  const apolloHost = host("apollo"), athenaHost = host("athena"), hermesHost = host("hermes");
-  const px = apolloHost?.adapters.proxmox, prom = athenaHost?.adapters.prometheus, loki = athenaHost?.adapters.loki, kube = hermesHost?.adapters.kubernetes;
-  const p = px?.data, m = prom?.data, l = loki?.data, k = kube?.data;
-  const apollo = listOf(p?.nodes)?.find(node => node.hostId === "apollo");
-  const vms = listOf(p?.vms), storage = listOf(p?.storage), nodes = listOf(k?.nodes);
-  const targets = listOf(m?.targets), pods = listOf(k?.pods), deployments = listOf(k?.deployments), services = listOf(k?.services);
-  const readyDeployments = deploymentReadiness(deployments);
-  const athenaMetrics = m?.metrics?.athena;
-  const logs = valueOf(l?.recentLogs);
-  const containers = listOf(m?.containers);
-  const stale = Boolean(error || (data && clock && clock - Date.parse(data.timestamp) > 300000));
-  const filteredPods = pods?.filter(pod => `${pod.name} ${pod.namespace} ${pod.phase}`.toLowerCase().includes(podFilter.trim().toLowerCase()));
-  const summary = (id: string) => id === "apollo" ? `${vms?.length ?? "—"} VMs · ${storage?.length ?? "—"} storage resources` : id === "athena" ? `${targets?.filter(t => t.health === "online").length ?? "—"} / ${targets?.length ?? "—"} targets up` : `${nodes?.length ?? "—"} nodes · ${pods?.length ?? "—"} pods`;
-
-  return <main className="shell">
-    <a className="skip-link" href="#overview">Skip to infrastructure</a>
-    <header className="topbar"><a className="brand" href="#overview"><span className="brand-mark"><Terminal size={20} /></span><span>OLYMPUS<small>INFRASTRUCTURE CONTROL PLANE</small></span></a><nav aria-label="Infrastructure">{roles.map(role => <a key={role.id} href={`#${role.id}`}>{role.name}</a>)}</nav><button className="refresh" onClick={() => void refresh()} disabled={syncing}><RefreshCw size={15} className={syncing ? "spin" : ""} />{syncing ? "Syncing…" : "Sync sources"}</button></header>
-    <section className="hero" id="overview"><div><div className="eyebrow">ARTEMIS / MANAGEMENT WORKSTATION</div><h1>Infrastructure overview<span>.</span></h1><p>Three roles. One view of the infrastructure you operate.</p></div><div className="sync-meta" aria-live="polite"><Badge label={syncing ? "Synchronizing" : stale ? "Stale observations" : data ? "Snapshot collected" : "Unavailable"} tone={stale ? "warn" : data ? "good" : "muted"} /><span>Last successful sync</span><time>{observation(data?.timestamp)}</time></div></section>
-    <div className={`notice ${stale ? "notice-warn" : ""}`} role={error ? "alert" : "status"}>{error || (stale ? "This snapshot is over five minutes old. Sync to refresh the observations below." : "On-demand observations. A host’s power state and its telemetry connection are reported separately.")}</div>
-    <section className="host-grid" aria-label="Host overview">{roles.map(({ id, name, role, icon: Icon, number }) => <a href={`#${id}`} className={`host-card ${id}`} key={id}><div className="host-card-top"><span className="host-number">{number} /</span><Icon size={21} /><HostState status={host(id)?.status} /></div><h2>{name}</h2><p>{role}</p><div className="host-card-bottom"><span>{summary(id)}</span><ArrowDownRight size={18} /></div><small>State source: {host(id)?.statusSource ?? "Not observed"}</small>{stale ? <small className="warning">Stale snapshot</small> : null}</a>)}</section>
-
-    <section id="apollo" className="host-section apollo" aria-labelledby="apollo-title"><div className="section-heading"><span className="section-number">01</span><div><h2 id="apollo-title">Apollo <span>/ Proxmox</span></h2><p>Physical compute, virtual machines and storage.</p></div><HostState status={apolloHost?.status} /></div><Source name="Proxmox API" adapter={px} />
-      <div className="metrics four"><Metric label="Node CPU" value={percent(apollo?.cpuRatio == null ? null : apollo.cpuRatio * 100)} detail={`${numeric(apollo?.cpuCount)} logical CPUs`} source="Proxmox · node" at={p?.nodes.state === "available" ? p.nodes.timestamp : null} utilization={apollo?.cpuRatio == null ? null : apollo.cpuRatio * 100} /><Metric label="Node memory" value={bytes(apollo?.memoryUsedBytes)} detail={`of ${bytes(apollo?.memoryTotalBytes)}`} utilization={ratioPercent(apollo?.memoryUsedBytes, apollo?.memoryTotalBytes)} source="Proxmox · node" at={p?.nodes.state === "available" ? p.nodes.timestamp : null} /><Metric label="Node disk" value={percent(ratioPercent(apollo?.storageUsedBytes, apollo?.storageTotalBytes))} detail={`${bytes(apollo?.storageUsedBytes)} / ${bytes(apollo?.storageTotalBytes)}`} utilization={ratioPercent(apollo?.storageUsedBytes, apollo?.storageTotalBytes)} source="Proxmox · node filesystem" at={p?.nodes.state === "available" ? p.nodes.timestamp : null} /><Metric label="Uptime" value={duration(apollo?.uptimeSeconds)} source="Proxmox · node" at={p?.nodes.state === "available" ? p.nodes.timestamp : null} /></div>
-      <Collection title="Virtual machines" source="Proxmox inventory" reading={p?.vms}><DataTable label="Proxmox virtual machines" columns={["VM / name", "State", "CPU usage / vCPUs", "Memory used / capacity", "Disk capacity", "Uptime"]}>{vms?.map(vm => <tr key={vm.id}><th scope="row"><strong>{vm.name ?? "Name unavailable"}</strong><small>VM {vm.vmId ?? "—"} · {vm.node}</small></th><td><HostState status={vm.status} /></td><td>{percent(vm.cpuRatio == null ? null : vm.cpuRatio * 100)}<small>{numeric(vm.cpuCount)} vCPUs</small></td><td>{bytes(vm.memoryUsedBytes)}<small>of {bytes(vm.memoryTotalBytes)}</small></td><td>{bytes(vm.storageTotalBytes)}<small>Allocated · not guest usage</small></td><td>{duration(vm.uptimeSeconds)}</td></tr>)}</DataTable></Collection>
-      <Collection title="Storage inventory" source="Proxmox storage resources" reading={p?.storage}><DataTable label="Proxmox storage inventory" columns={["Storage resource", "Node", "Used", "Capacity", "Utilization"]}>{storage?.map(item => <tr key={item.id}><th scope="row">{item.name ?? item.id}</th><td>{item.node}</td><td>{bytes(item.storageUsedBytes)}</td><td>{bytes(item.storageTotalBytes)}</td><td>{percent(ratioPercent(item.storageUsedBytes, item.storageTotalBytes))}</td></tr>)}</DataTable></Collection>
-    </section>
-
-    <section id="athena" className="host-section athena" aria-labelledby="athena-title"><div className="section-heading"><span className="section-number">02</span><div><h2 id="athena-title">Athena <span>/ Observability</span></h2><p>Existing metrics, scrape targets and log ingestion.</p></div><HostState status={athenaHost?.status} /></div><div className="two-columns"><Source name="Prometheus" adapter={prom} /><Source name="Loki" adapter={loki} /></div>
-      <div className="metrics four"><Metric label="Athena VM CPU" value={valueOf(athenaMetrics?.cpuPercent) ? percent(valueOf(athenaMetrics?.cpuPercent)?.value) : readingLabel(athenaMetrics?.cpuPercent)} source="Prometheus · hypervisor-observed" detail="Proxmox Exporter / VM 100" at={valueOf(athenaMetrics?.cpuPercent)?.sampledAt} atLabel="Evaluated" /><Metric label="Athena VM memory" value={valueOf(athenaMetrics?.memoryPercent) ? percent(valueOf(athenaMetrics?.memoryPercent)?.value) : readingLabel(athenaMetrics?.memoryPercent)} source="Prometheus · hypervisor-observed" detail="Proxmox Exporter / VM 100" at={valueOf(athenaMetrics?.memoryPercent)?.sampledAt} atLabel="Evaluated" /><Metric label="Scrape targets up" value={targets ? `${targets.filter(t => t.health === "online").length} / ${targets.length}` : readingLabel(m?.targets)} source="Prometheus · scrape health" /><Metric label="Prometheus firing alerts" value={listOf(m?.alerts)?.filter(a => a.state === "firing").length ?? readingLabel(m?.alerts)} source="Prometheus · alert rules" detail="Grafana-managed alerts not verified" /></div>
-      <div className="coverage-note"><Badge label="Not verified" /><span>Athena guest CPU, memory, uptime and filesystem attribution. Hypervisor readings above are not guest measurements. Grafana-managed alerts are also not verified.</span></div>
-      <Collection title="Scrape targets" source="Prometheus" reading={m?.targets}><DataTable label="Prometheus scrape targets" columns={["Job", "Instance", "Scrape state", "Last scrape"]}>{targets?.map((target, index) => <tr key={`${target.job}/${target.instance}/${index}`}><th scope="row">{target.job ?? "Unavailable"}</th><td>{target.instance ?? "Unavailable"}</td><td><Badge label={target.health === "online" ? "Up" : target.health === "offline" ? "Down" : "Unavailable"} tone={target.health === "online" ? "good" : target.health === "offline" ? "bad" : "muted"} /></td><td>{observation(target.lastScrape)}</td></tr>)}</DataTable></Collection>
-      <div className="two-columns"><div className="collection"><div className="collection-heading"><h3>Log ingestion</h3><span>Loki · bounded metadata</span></div><div className="log-observation"><Badge label={logs ? logs.latestEntryAt ? freshness(logs.latestEntryAt, l?.recentLogs?.timestamp) : "No entries in window" : l?.recentLogs ? readingLabel(l.recentLogs) : loki?.data ? "Not configured" : adapterLabel(loki)} tone={logs?.latestEntryAt ? freshness(logs.latestEntryAt, l?.recentLogs?.timestamp) === "Recent at sync" ? "good" : "warn" : "muted"} /><dl><div><dt>Latest log timestamp</dt><dd>{observation(logs?.latestEntryAt)}</dd></div><div><dt>Entries inspected</dt><dd>{logs?.inspectedEntries ?? "Unavailable"} <small>/ up to 20 in 15 minutes</small></dd></div><div><dt>Valid label names</dt><dd>{valueOf(l?.labelCount) ?? readingLabel(l?.labelCount)}</dd></div></dl><p>Entry time is not receipt time. A quiet window does not mean Loki is offline. Log bodies are never sent to this view.</p>{l?.recentLogs?.error ? <p className="error-text">{l.recentLogs.error.message}</p> : null}</div><div className="observed">Observed {observation(l?.recentLogs?.state === "available" ? l.recentLogs.timestamp : null)}</div></div>
-      <Collection title="Container resources" source="Prometheus · cAdvisor" reading={m?.containers ?? (m ? { state: "unavailable", data: null, timestamp: prom!.timestamp, error: { code: "unconfigured", message: "Container observation query is not configured." } } : undefined)}><DataTable label="Athena container resources" columns={["Container", "CPU / 5m average", "Memory / working set", "Last seen / availability"]}>{containers?.map(item => <tr key={item.name}><th scope="row">{item.name}</th><td>{valueOf(item.cpuCores) ? `${valueOf(item.cpuCores)!.value.toFixed(4)} cores` : readingLabel(item.cpuCores)}{valueOf(item.cpuCores) ? <small>Evaluated {observation(valueOf(item.cpuCores)?.sampledAt)}</small> : <small>{item.cpuCores?.error?.message}</small>}</td><td>{valueOf(item.memoryWorkingSetBytes) ? bytes(valueOf(item.memoryWorkingSetBytes)!.value) : readingLabel(item.memoryWorkingSetBytes)}{valueOf(item.memoryWorkingSetBytes) ? <small>Evaluated {observation(valueOf(item.memoryWorkingSetBytes)?.sampledAt)}</small> : <small>{item.memoryWorkingSetBytes?.error?.message}</small>}</td><td>{observation(item.lastSeenAt)}<small><Badge label={freshness(item.lastSeenAt, m?.containers?.timestamp)} tone={freshness(item.lastSeenAt, m?.containers?.timestamp) === "Recent at sync" ? "good" : "warn"} /></small></td></tr>)}</DataTable><p className="footnote">CPU: five-minute average in cores (1 core = 100% of one CPU). Memory: working-set bytes. Availability reflects last-seen telemetry; container lifecycle and health-check state are unavailable. Evaluation time is not scrape time.</p></Collection></div>
-      <Collection title="Prometheus alerts" source="Prometheus only" reading={m?.alerts} empty="No active Prometheus alerts at this observation."><DataTable label="Prometheus alerts" columns={["Alert", "State", "Active since"]}>{listOf(m?.alerts)?.map((alert, index) => <tr key={`${alert.name}/${index}`}><th scope="row">{alert.name}</th><td><Badge label={alert.state} tone={alert.state === "firing" ? "bad" : "warn"} /></td><td>{observation(alert.activeAt)}</td></tr>)}</DataTable></Collection>
-    </section>
-
-    <section id="hermes" className="host-section hermes" aria-labelledby="hermes-title"><div className="section-heading"><span className="section-number">03</span><div><h2 id="hermes-title">Hermes <span>/ Kubernetes</span></h2><p>Cluster inventory and current resource usage.</p></div><HostState status={hermesHost?.status} /></div><Source name="Kubernetes API" adapter={kube} />
-      <div className="metrics four"><Metric label="K3s version" value={valueOf(k?.version) ?? readingLabel(k?.version)} source="Kubernetes API · version" /><Metric label="Pods" value={count(k?.pods)} detail={pods ? `${pods.filter(pod => pod.phase === "Running").length} running · ${pods.filter(pod => pod.phase === "Succeeded").length} completed` : undefined} source="Kubernetes API" /><Metric label="Deployments ready" value={readyDeployments ? `${readyDeployments.ready} / ${readyDeployments.total}` : readingLabel(k?.deployments)} detail={readyDeployments?.unknown ? `${readyDeployments.unknown} readiness unavailable` : undefined} source="Kubernetes API" /><Metric label="Services / ingresses" value={`${count(k?.services)} / ${count(k?.ingresses)}`} source="Kubernetes API" /></div>
-      <HermesResourceSummary data={k} />
-      <Collection title="Nodes & resource usage" source="Kubernetes API + metrics-server" reading={k?.nodes}><NodeResourcesTable data={k} /></Collection>
-      <Collection title="Namespaces" source="Kubernetes API" reading={k?.namespaces}><div className="namespace-list">{listOf(k?.namespaces)?.map(name => <span key={name}>{name}</span>)}</div></Collection>
-      <Collection title="Pods" source="Kubernetes API" reading={k?.pods}><label className="filter">Filter pods <input type="search" placeholder="Name, namespace or phase" value={podFilter} onChange={event => setPodFilter(event.target.value)} /></label><DataTable label="Kubernetes pods" columns={["Pod", "Namespace / node", "Phase", "CPU / memory usage", "Readiness / restarts"]}>{filteredPods?.map(pod => <PodRows key={`${pod.namespace}/${pod.name}`} pod={pod} metrics={k?.podMetrics} />)}</DataTable>{filteredPods?.length === 0 ? <p className="empty">No pods match this filter.</p> : null}</Collection>
-      <div className="two-columns"><Collection title="Deployments" source="Kubernetes API" reading={k?.deployments}><DataTable label="Kubernetes deployments" columns={["Deployment", "Ready / desired", "Available"]}>{deployments?.map(item => <tr key={`${item.namespace}/${item.name}`}><th scope="row">{item.name}<small>{item.namespace}</small></th><td>{numeric(item.ready)} / {numeric(item.desired)}</td><td>{numeric(item.available)}</td></tr>)}</DataTable></Collection><Collection title="Services" source="Kubernetes API" reading={k?.services}><DataTable label="Kubernetes services" columns={["Service", "Type", "Ports"]}>{services?.map(item => <tr key={`${item.namespace}/${item.name}`}><th scope="row">{item.name}<small>{item.namespace}</small></th><td>{item.type ?? "Unavailable"}</td><td>{item.ports.length ? item.ports.map(port => `${port.port}/${port.protocol ?? "?"}`).join(", ") : "None returned"}</td></tr>)}</DataTable></Collection></div>
-      <Collection title="Ingresses" source="Kubernetes API" reading={k?.ingresses}><DataTable label="Kubernetes ingresses" columns={["Ingress", "Namespace", "Class", "Hosts"]}>{listOf(k?.ingresses)?.map(item => <tr key={`${item.namespace}/${item.name}`}><th scope="row">{item.name}</th><td>{item.namespace}</td><td>{item.className ?? "Unavailable"}</td><td>{item.hosts.join(", ") || "None returned"}</td></tr>)}</DataTable></Collection>
-    </section>
-    <footer><span>OLYMPUS <b>/ V2</b></span><span>Artemis · management role only; workstation telemetry unavailable.</span><span>Read-only sources · manual synchronization</span></footer>
-  </main>;
+  return <Dashboard tools={[
+    { name: "Proxmox", host: "Apollo", description: "Virtualization console", href: toolUrl(process.env.PROXMOX_URL) },
+    { name: "Prometheus", host: "Athena", description: "Metrics and query explorer", href: toolUrl(process.env.PROMETHEUS_URL) },
+    { name: "Grafana", host: "Athena", description: "Existing observability dashboards", href: toolUrl(process.env.GRAFANA_URL, true) },
+  ]} />;
 }

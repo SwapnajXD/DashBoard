@@ -37,6 +37,22 @@ The previous build failure was an execution-environment restriction, not malform
 
 Running `npm run build` with child-process execution permitted completed successfully without changing `tsconfig.json`, framework versions, or disabling type checking. Run builds and tests in an environment that permits their child processes. The sandbox can also report the test file as passing without executing its individual cases; verify the named test cases and count in the output.
 
+## Dashboard workspaces
+
+The sidebar opens the overview, Apollo, Athena, Hermes and external tools. The overview ranks current container/pod resource use and lists reported issues and collection gaps. Resource links open searchable host inventories with expandable details; pod links include their namespace. Browser back/forward navigation follows workspace links.
+
+Apollo includes VM, storage and host views. Athena includes containers, scrape targets, log freshness and Prometheus alerts. Hermes includes namespace filters, pods with container details, services, ingresses, deployments and node capacity. Missing readings remain unavailable; stale snapshots retain their original timestamps.
+
+External tool links use explicitly configured `PROXMOX_URL`, `PROMETHEUS_URL` and optional `GRAFANA_URL`. These credential-free HTTP(S) origins are visible in the browser. URLs containing credentials, query strings or fragments are rejected. Grafana also accepts an explicit `IP:port` (HTTP) or a full URL with a proxy subpath; other tool links require root paths; missing links show as unavailable. Address-derived adapter URLs are not automatically published as tool links.
+
+### Live logs
+
+Open Athena → Live logs to read Loki messages. The separate `/api/logs` endpoint reads only the server-configured `LOKI_RECENT_LOG_QUERY`, using the existing Loki address, bearer token and tenant configuration. It returns the newest 100 entries from the last 15 minutes, with each line limited to 8,192 characters and a small allowlist of source labels. Raw messages render as text, and are not included in `/api/infrastructure`.
+
+The view refreshes three seconds after each request finishes, only while mounted and unpaused. Pause retains the displayed snapshot; Resume fetches the current window. Filters apply to displayed messages and source names. This is a bounded rolling window, not a complete log archive; high-volume streams can produce more entries between refreshes. Errors retain the last successful snapshot and mark it disconnected. This endpoint shares the dashboard's existing trusted-private-access boundary; it has no separate authentication layer and exposes the selected log text to dashboard users.
+
+The query uses Loki's documented [query_range endpoint](https://grafana.com/docs/loki/latest/reference/loki-http-api/#query-logs-within-a-range-of-time).
+
 ## Infrastructure API
 
 ```text
