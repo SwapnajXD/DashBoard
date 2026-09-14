@@ -5,19 +5,21 @@ import { resolveHostAddress } from "../config/hosts";
 import type { AdapterStatus, HostConfig, ProxmoxData, ProxmoxResource } from "../types/infrastructure";
 import { array, collected, endpoint, failed, finite, object, reading, request, string, TelemetryFailure } from "./shared";
 
+const nonnegative = (value: unknown) => { const result = finite(value); return result !== null && result >= 0 ? result : null; };
+
 export function normalizeProxmox(value: unknown, kind?: string): ProxmoxResource {
   const item = object(value);
   const type = kind ?? string(item.type) ?? "unknown";
-  const vmId = finite(item.vmid);
+  const vmId = nonnegative(item.vmid);
   return {
     id: string(item.id) ?? (type === "node" ? `node/${string(item.node) ?? "unknown"}` : `${type}/${vmId ?? "unknown"}`),
     node: string(item.node) ?? "unknown", name: string(item.name), type, vmId,
     hostId: type === "node" && item.node === (process.env.PROXMOX_NODE_NAME || "apollo") ? "apollo" : vmId === 100 ? "athena" : vmId === 101 ? "hermes" : null,
     status: item.status === "online" || item.status === "running" ? "online" : item.status === "offline" || item.status === "stopped" ? "offline" : "unknown",
-    cpuRatio: finite(item.cpu), cpuCount: finite(item.maxcpu),
-    memoryUsedBytes: finite(item.mem), memoryTotalBytes: finite(item.maxmem),
-    storageUsedBytes: finite(item.disk), storageTotalBytes: finite(item.maxdisk),
-    uptimeSeconds: finite(item.uptime),
+    cpuRatio: nonnegative(item.cpu), cpuCount: nonnegative(item.maxcpu),
+    memoryUsedBytes: nonnegative(item.mem), memoryTotalBytes: nonnegative(item.maxmem),
+    storageUsedBytes: nonnegative(item.disk), storageTotalBytes: nonnegative(item.maxdisk),
+    uptimeSeconds: nonnegative(item.uptime),
   };
 }
 

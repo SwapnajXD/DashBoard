@@ -4,6 +4,8 @@ import type { AdapterStatus, HostConfig, HostMetrics, MetricSample, PrometheusDa
 import { array, collected, endpoint, failed, object, reading, request, string, TelemetryFailure, unavailable } from "./shared";
 import { normalizeContainers } from "./observations";
 
+const timestamp = (value: unknown) => { const text = string(value); return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : null; };
+
 // A single finite sample is required: silently taking the first series can assign another host's metrics.
 export function normalizeSample(value: unknown): MetricSample {
   const body = object(value);
@@ -47,11 +49,11 @@ export async function getPrometheusStatus(host: HostConfig, transport = request)
     const [targets, alerts, apollo, athena, hermes, containers] = await Promise.all([
       reading(async () => array((await api("targets")).activeTargets).map(value => {
         const target = object(value); const labels = object(target.labels);
-        return { job: string(labels.job), instance: string(labels.instance), health: target.health === "up" ? "online" as const : target.health === "down" ? "offline" as const : "unknown" as const, lastScrape: string(target.lastScrape) };
+        return { job: string(labels.job), instance: string(labels.instance), health: target.health === "up" ? "online" as const : target.health === "down" ? "offline" as const : "unknown" as const, lastScrape: timestamp(target.lastScrape) };
       })),
       reading(async () => array((await api("alerts")).alerts).map(value => {
         const alert = object(value); const labels = object(alert.labels);
-        return { name: string(labels.alertname) ?? "Unnamed alert", state: string(alert.state) ?? "unknown", activeAt: string(alert.activeAt) };
+        return { name: string(labels.alertname) ?? "Unnamed alert", state: string(alert.state) ?? "unknown", activeAt: timestamp(alert.activeAt) };
       })),
       metricsFor("APOLLO"), metricsFor("ATHENA"), metricsFor("HERMES"),
       containerQuery ? reading(async () => normalizeContainers(await transport(base, `/api/v1/query?${new URLSearchParams({ query: containerQuery, timeout: "4s" })}`, options))) : undefined,

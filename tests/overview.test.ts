@@ -104,3 +104,30 @@ test("overview accepts independently successful hosts and rejects malformed reso
   malformed.hosts[2].adapters.kubernetes.data.pods.data = [{}];
   assert.equal(isInfrastructureResponse(malformed), false);
 });
+
+test("each failed host preserves the other independent successful adapters", async () => {
+  const px = { nodes: await reading(async () => [normalizeProxmox({ node: "apollo", status: "online" }, "node")]), vms: await reading(async () => []), storage: await reading(async () => []) };
+  const kd: KubernetesData = { apiReachable: true, version: await reading(async () => "v1.test"), nodes: await reading(async () => []), namespaces: await reading(async () => []), pods: await reading(async () => []), deployments: await reading(async () => []), services: await reading(async () => []), ingresses: await reading(async () => []), nodeMetrics: await reading(async () => []) };
+  for (const failedHost of ["apollo", "athena", "hermes"]) {
+    const result = await collectInfrastructure({
+      proxmox: async () => failedHost === "apollo" ? failed(new Error("test-private-marker")) : collected(px, [], "online"),
+      prometheus: async () => failed(new Error("test-private-marker")),
+      loki: async () => failedHost === "athena" ? failed(new Error("test-private-marker")) : collected({ ready: true, labelCount: await reading(async () => 1) }, []),
+      kubernetes: async () => failedHost === "hermes" ? failed(new Error("test-private-marker")) : collected(kd, []),
+    });
+    assert.ok(isInfrastructureResponse(result));
+    assert.equal(Boolean(result.hosts[0].adapters.proxmox?.data), failedHost !== "apollo");
+    assert.equal(Boolean(result.hosts[1].adapters.loki?.data), failedHost !== "athena");
+    assert.equal(Boolean(result.hosts[2].adapters.kubernetes?.data), failedHost !== "hermes");
+    assert.ok(!JSON.stringify(result).includes("test-private-marker"));
+  }
+});
+
+test("malformed optional upstream values cannot poison otherwise usable observations", async () => {
+  const px = normalizeProxmox({ node: "apollo", mem: -1, disk: -1, uptime: -1, cpu: -1 }, "node");
+  assert.equal(px.memoryUsedBytes, null); assert.equal(px.storageUsedBytes, null); assert.equal(px.uptimeSeconds, null); assert.equal(px.cpuRatio, null);
+  process.env.PROMETHEUS_URL = "https://prometheus.test";
+  const result = await getPrometheusStatus(athena, async (_base, path) => path === "/-/healthy" ? "healthy" : path.endsWith("targets") ? { status: "success", data: { activeTargets: [{ labels: {}, health: "up", lastScrape: "bad" }] } } : { status: "success", data: { alerts: [{ labels: {}, activeAt: "bad" }] } });
+  assert.equal(result.data?.targets.data?.[0].lastScrape, null);
+  assert.equal(result.data?.targets.data?.[0].health, "online"); assert.equal(result.data?.alerts.data?.[0].activeAt, null);
+});
