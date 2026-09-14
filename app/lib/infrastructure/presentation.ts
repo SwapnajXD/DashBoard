@@ -18,9 +18,9 @@ export function infrastructureView(response: InfrastructureResponse | null) {
   };
   return {
     proxmox, prometheus, kubernetes, apollo, status, serviceStatus,
-    cpu: prometheus?.metrics.apollo.cpuPercent.data?.value ?? (apollo?.cpuRatio == null ? null : apollo.cpuRatio * 100),
-    memory: prometheus?.metrics.apollo.memoryPercent.data?.value ?? ratioPercent(apollo?.memoryUsedBytes, apollo?.memoryTotalBytes),
-    storage: prometheus?.metrics.apollo.storagePercent.data?.value ?? ratioPercent(apollo?.storageUsedBytes, apollo?.storageTotalBytes),
+    cpu: apollo?.cpuRatio == null ? null : apollo.cpuRatio * 100,
+    memory: ratioPercent(apollo?.memoryUsedBytes, apollo?.memoryTotalBytes),
+    storage: ratioPercent(apollo?.storageUsedBytes, apollo?.storageTotalBytes),
     firingAlerts: prometheus?.alerts.data?.filter(alert => alert.state === "firing").length ?? null,
   };
 }
